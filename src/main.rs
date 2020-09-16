@@ -31,8 +31,6 @@ fn main() {
 }
 
 fn handle_connection(mut stream: TcpStream, queue: Arc<Mutex<VecDeque<String>>>) {
-    help(&stream);
-
     loop {
         let mut buffer = [0; 512];
         let size = match stream.read(&mut buffer) {
@@ -47,7 +45,7 @@ fn handle_connection(mut stream: TcpStream, queue: Arc<Mutex<VecDeque<String>>>)
             &P_KEY => store_data(&stream, &buffer, size, queue.clone()),
             &C_KEY => read_data(&stream, queue.clone()),
             &Q_KEY => return,
-            _ => help(&stream),
+            _ => continue,
         }
     }
 }
@@ -59,7 +57,7 @@ fn store_data(
     queue: Arc<Mutex<VecDeque<String>>>,
 ) {
     let content = String::from_utf8_lossy(&buffer[1..size]).to_string();
-    println!("[APPEND] {}", content);
+    // println!("[APPEND] {}", content);
     queue.lock().unwrap().push_front(content);
     stream.write_all(b"ok\r\n").unwrap();
 }
@@ -67,13 +65,7 @@ fn store_data(
 fn read_data(mut stream: &TcpStream, queue: Arc<Mutex<VecDeque<String>>>) {
     if let Some(content) = queue.lock().unwrap().pop_back() {
         stream.write_all(content.as_bytes()).unwrap();
+    } else {
+        stream.write_all("empty\r\n".as_bytes()).unwrap();
     }
-}
-
-fn help(mut stream: &TcpStream) {
-    stream
-        .write_all(b"pXXX -> publish content XXX\r\n")
-        .unwrap();
-    stream.write_all(b"c -> consume new content\r\n").unwrap();
-    stream.write_all(b"q -> close stream\r\n").unwrap();
 }

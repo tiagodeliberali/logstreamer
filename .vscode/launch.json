@@ -7,15 +7,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'logstreamer'",
+            "name": "Debug executable 'client_test'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=logstreamer",
+                    "--bin=client_test",
                     "--package=logstreamer"
                 ],
                 "filter": {
-                    "name": "logstreamer",
+                    "name": "client_test",
                     "kind": "bin"
                 }
             },
@@ -25,16 +25,53 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'logstreamer'",
+            "name": "Debug unit tests in executable 'client_test'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=logstreamer",
+                    "--bin=client_test",
                     "--package=logstreamer"
                 ],
                 "filter": {
-                    "name": "logstreamer",
+                    "name": "client_test",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'service'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=service",
+                    "--package=logstreamer"
+                ],
+                "filter": {
+                    "name": "service",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'service'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=service",
+                    "--package=logstreamer"
+                ],
+                "filter": {
+                    "name": "service",
                     "kind": "bin"
                 }
             },
