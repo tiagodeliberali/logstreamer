@@ -36,7 +36,7 @@ fn handle_connection(mut stream: TcpStream, queue: Arc<Mutex<VecDeque<String>>>)
         let size = match stream.read(&mut buffer) {
             Ok(value) => value,
             Err(err) => {
-                println!("Failed to read stream\n{}", err);
+                println!("Failed to read stream\r\n{}", err);
                 return;
             }
         };
