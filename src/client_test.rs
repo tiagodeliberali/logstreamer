@@ -4,7 +4,7 @@ use std::thread;
 use std::time::Instant;
 
 fn main() {
-    thread::spawn(move || {
+    let consumer = thread::spawn(move || {
         let last_value = b"nice message 1999999";
         let start = Instant::now();
         let mut stream = TcpStream::connect("127.0.0.1:8080").unwrap();
@@ -45,7 +45,7 @@ fn main() {
         println!("DURATION CONSUMER: {:?}", duration);
     });
 
-    thread::spawn(move || {
+    let producer = thread::spawn(move || {
         let start = Instant::now();
         let mut stream = TcpStream::connect("127.0.0.1:8080").unwrap();
 
@@ -72,5 +72,6 @@ fn main() {
         println!("DURATION PRODUCER: {:?}", duration);
     });
 
-    loop {}
+    consumer.join().unwrap();
+    producer.join().unwrap();
 }
