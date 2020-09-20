@@ -10,6 +10,22 @@ fn to_clean_string(input: &[u8]) -> String {
         .replace("\n", "")
 }
 
+fn send_message(stream: &mut TcpStream, message: ActionMessage) -> Vec<ResponseMessage> {
+    stream.write_all(&message.as_vec()[..]).unwrap();
+    stream.flush().unwrap();
+
+    let mut buffer = [0; 512];
+    let _ = match &stream.read(&mut buffer) {
+        Ok(value) => value,
+        Err(err) => {
+            println!("Failed to read stream\n{}", err);
+            return vec![ResponseMessage::new_empty()];
+        }
+    };
+
+    ResponseMessage::parse(&buffer)
+}
+
 fn main() {
     let mut exit = false;
     let mut stream = TcpStream::connect("127.0.0.1:8080").unwrap();
@@ -23,7 +39,14 @@ fn main() {
 
         let message = match action {
             // c - consume
-            99 => ActionMessage::new(Action::Consume, to_clean_string(&input.as_bytes()[1..])),
+            99 => ActionMessage::new(
+                Action::Consume(
+                    to_clean_string(&input.as_bytes()[1..5])
+                        .parse::<u32>()
+                        .unwrap(),
+                ),
+                to_clean_string(&input.as_bytes()[5..]),
+            ),
             // m - commit
             109 => ActionMessage::new(
                 Action::CommitOffset(
@@ -46,26 +69,12 @@ fn main() {
             _ => ActionMessage::new(Action::Invalid, String::new()),
         };
 
-        stream.write_all(&message.as_vec()[..]).unwrap();
-        stream.flush().unwrap();
-
-        let mut buffer = [0; 512];
-        let _ = match stream.read(&mut buffer) {
-            Ok(value) => value,
-            Err(err) => {
-                println!("Failed to read stream\n{}", err);
-                continue;
-            }
-        };
-
-        let response_list = ResponseMessage::parse(&buffer);
+        let response_list = send_message(&mut stream, message);
 
         for response in response_list {
             match response.response {
                 Response::Empty => println!("[empty]"),
-                Response::Content(offset, value) => {
-                    println!("[offset] {}\r\n[content] {}", offset, value)
-                }
+                Response::Content(offset, value) => println!("[content: {}] {}", offset, value),
                 Response::Offset(value) => println!("[offset] {}", value),
             }
         }

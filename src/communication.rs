@@ -27,7 +27,7 @@ fn write_u32(content: &mut Vec<u8>, value: u32) {
 
 pub enum Action {
     Produce(String),
-    Consume,
+    Consume(u32),
     CommitOffset(u32),
     Quit,
     Invalid,
@@ -55,7 +55,11 @@ impl ActionMessage {
                 consumer_id_position += 1 + size;
                 Action::Produce(content)
             }
-            2 => Action::Consume,
+            2 => {
+                let (limit, size) = read_u32(buffer, 1);
+                consumer_id_position += size;
+                Action::Consume(limit)
+            }
             3 => {
                 let (offset, size) = read_u32(buffer, 1);
                 consumer_id_position += size;
@@ -73,24 +77,27 @@ impl ActionMessage {
         }
     }
 
-    pub fn as_vec(self) -> Vec<u8> {
+    pub fn as_vec(&self) -> Vec<u8> {
         let mut content: Vec<u8> = Vec::new();
 
-        match self.action {
+        match &self.action {
             Action::Produce(value) => {
                 content.push(1);
-                write_string(&mut content, value);
+                write_string(&mut content, value.clone());
             }
-            Action::Consume => content.push(2),
+            Action::Consume(limit) => {
+                content.push(2);
+                write_u32(&mut content, *limit);
+            }
             Action::CommitOffset(value) => {
                 content.push(3);
-                write_u32(&mut content, value);
+                write_u32(&mut content, *value);
             }
             Action::Quit => content.push(4),
             Action::Invalid => content.push(0),
         }
 
-        write_string(&mut content, self.consumer_id);
+        write_string(&mut content, self.consumer_id.clone());
 
         content
     }
@@ -151,19 +158,19 @@ impl ResponseMessage {
         result_list
     }
 
-    pub fn as_vec(self) -> Vec<u8> {
+    pub fn as_vec(&self) -> Vec<u8> {
         let mut content = Vec::new();
 
-        match self.response {
+        match &self.response {
             Response::Empty => content.push(0),
             Response::Content(offset, value) => {
                 content.push(1);
-                write_u32(&mut content, offset);
-                write_string(&mut content, value);
+                write_u32(&mut content, *offset);
+                write_string(&mut content, value.clone());
             }
             Response::Offset(offset) => {
                 content.push(2);
-                write_u32(&mut content, offset);
+                write_u32(&mut content, *offset);
             }
         }
 
@@ -230,26 +237,33 @@ mod tests {
     #[test]
     fn should_convert_consume_action_to_vec() {
         let consumer_id = String::from("consumer_id");
-        let message = ActionMessage::new(Action::Consume, consumer_id.clone());
+        let message = ActionMessage::new(Action::Consume(10), consumer_id.clone());
 
         let parsed_message = message.as_vec();
 
         assert_eq!(parsed_message[0], 2); // action id
-        assert_eq!(parsed_message[1], 11); // consumer_id length
-        assert_eq!(String::from_utf8_lossy(&parsed_message[2..13]), consumer_id);
+        assert_eq!(parsed_message[4], 10); // consumer_id length
+        assert_eq!(parsed_message[5], 11); // consumer_id length
+        assert_eq!(String::from_utf8_lossy(&parsed_message[6..17]), consumer_id);
     }
 
     #[test]
     fn should_parse_consume_action() {
         let mut bytes = vec![
-            2,  // action id
+            2, // action id
+            0, 0, 0, 10, // limit
             11, // consumer_id length
         ];
         bytes.extend_from_slice(b"consumer_id");
 
         let message = ActionMessage::parse(&bytes[..]);
 
-        assert!(matches!(message.action, Action::Consume));
+        if let Action::Consume(limit) = message.action {
+            assert_eq!(limit, 10);
+        } else {
+            assert!(false);
+        }
+
         assert_eq!(message.consumer_id, "consumer_id");
     }
 

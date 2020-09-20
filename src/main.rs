@@ -76,7 +76,7 @@ fn handle_connection(mut stream: TcpStream, storage: Arc<Storage>) {
 
         let response_list = match message.action {
             Action::Produce(content) => store_data(content, storage.clone()),
-            Action::Consume => read_data(message.consumer_id, storage.clone()),
+            Action::Consume(limit) => read_data(message.consumer_id, limit, storage.clone()),
             Action::CommitOffset(offset) => {
                 consume_offset(offset, message.consumer_id, storage.clone())
             }
@@ -99,17 +99,18 @@ fn handle_connection(mut stream: TcpStream, storage: Arc<Storage>) {
 }
 
 fn store_data(content: String, storage: Arc<Storage>) -> Vec<ResponseMessage> {
-    println!("[PRODUCE] {}", content);
     let offset = storage.add_content(content);
     vec![ResponseMessage::new(Response::Offset(offset))]
 }
 
-fn read_data(consumer_id: String, storage: Arc<Storage>) -> Vec<ResponseMessage> {
-    println!("[CONSUME] {}", consumer_id);
+fn read_data(consumer_id: String, limit: u32, storage: Arc<Storage>) -> Vec<ResponseMessage> {
     let mut content_list = Vec::new();
     let offset = storage.read_for_consumer(consumer_id);
     let mut position = offset as u32;
-    for value in storage.queue.lock().unwrap()[offset..].into_iter() {
+    let locked_queue = storage.queue.lock().unwrap();
+    for value in
+        locked_queue[offset..(usize::min(offset + limit as usize, locked_queue.len()))].iter()
+    {
         content_list.push(ResponseMessage::new(Response::Content(
             position,
             value.clone(),
@@ -121,7 +122,6 @@ fn read_data(consumer_id: String, storage: Arc<Storage>) -> Vec<ResponseMessage>
 }
 
 fn consume_offset(offset: u32, consumer_id: String, storage: Arc<Storage>) -> Vec<ResponseMessage> {
-    println!("[OFFSET] {}", offset);
-    storage.update_offset(consumer_id, offset);
+    storage.update_offset(consumer_id, offset + 1);
     vec![]
 }
