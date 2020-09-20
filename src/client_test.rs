@@ -1,3 +1,4 @@
+use logstreamer::{Action, ActionMessage, Response, ResponseMessage};
 use std::io::prelude::*;
 use std::net::TcpStream;
 use std::thread;
@@ -5,13 +6,15 @@ use std::time::Instant;
 
 fn main() {
     let consumer = thread::spawn(move || {
-        let last_value = b"nice message 1999999";
         let start = Instant::now();
         let mut stream = TcpStream::connect("127.0.0.1:8080").unwrap();
         let mut i = 0;
 
+        let message = ActionMessage::new(Action::Consume, String::from("consumer"));
+        let message_content = &message.as_vec()[..];
+
         loop {
-            stream.write_all("c\r\n".as_bytes()).unwrap();
+            stream.write_all(message_content).unwrap();
             stream.flush().unwrap();
             let mut buffer = [0; 512];
             let size = match stream.read(&mut buffer) {
@@ -22,12 +25,14 @@ fn main() {
                 }
             };
 
-            if buffer.starts_with(last_value) {
-                println!(
-                    "CONSUMER MESSAGE FOUND {}",
-                    String::from_utf8_lossy(&buffer[..size])
-                );
-                break;
+            let response_list = ResponseMessage::parse(&buffer);
+            let response = response_list.first().unwrap();
+
+            if let Response::Content(offset, content) = &response.response {
+                if *offset == 1_999_999 {
+                    println!("CONSUMER MESSAGE FOUND {}", content);
+                    break;
+                }
             }
 
             if i % 50_000 == 0 {
@@ -50,9 +55,11 @@ fn main() {
         let mut stream = TcpStream::connect("127.0.0.1:8080").unwrap();
 
         for i in 0..2_000_000 {
-            stream
-                .write_all(format!("pnice message {}\r\n", i).as_bytes())
-                .unwrap();
+            let message = ActionMessage::new(
+                Action::Produce(format!("nice message {}", i)),
+                String::new(),
+            );
+            stream.write_all(&message.as_vec()[..]).unwrap();
             stream.flush().unwrap();
             let mut buffer = [0; 512];
             let _ = match stream.read(&mut buffer) {

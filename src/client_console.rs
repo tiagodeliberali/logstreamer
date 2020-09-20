@@ -1,0 +1,73 @@
+use logstreamer::{Action, ActionMessage, Response, ResponseMessage};
+use std::io;
+use std::io::prelude::*;
+use std::net::TcpStream;
+
+fn to_clean_string(input: &[u8]) -> String {
+    String::from_utf8_lossy(&input)
+        .to_string()
+        .replace("\r", "")
+        .replace("\n", "")
+}
+
+fn main() {
+    let mut exit = false;
+    let mut stream = TcpStream::connect("127.0.0.1:8080").unwrap();
+
+    println!("logstreamer client");
+    while !exit {
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+
+        let action = input.as_bytes()[0];
+
+        let message = match action {
+            // c - consume
+            99 => ActionMessage::new(Action::Consume, to_clean_string(&input.as_bytes()[1..])),
+            // m - commit
+            109 => ActionMessage::new(
+                Action::CommitOffset(
+                    to_clean_string(&input.as_bytes()[1..5])
+                        .parse::<u32>()
+                        .unwrap(),
+                ),
+                to_clean_string(&input.as_bytes()[5..]),
+            ),
+            // p - produce
+            112 => ActionMessage::new(
+                Action::Produce(to_clean_string(&input.as_bytes()[1..])),
+                String::new(),
+            ),
+            // q - quit
+            113 => {
+                exit = true;
+                ActionMessage::new(Action::Quit, String::new())
+            }
+            _ => ActionMessage::new(Action::Invalid, String::new()),
+        };
+
+        stream.write_all(&message.as_vec()[..]).unwrap();
+        stream.flush().unwrap();
+
+        let mut buffer = [0; 512];
+        let _ = match stream.read(&mut buffer) {
+            Ok(value) => value,
+            Err(err) => {
+                println!("Failed to read stream\n{}", err);
+                continue;
+            }
+        };
+
+        let response_list = ResponseMessage::parse(&buffer);
+
+        for response in response_list {
+            match response.response {
+                Response::Empty => println!("[empty]"),
+                Response::Content(offset, value) => {
+                    println!("[offset] {}\r\n[content] {}", offset, value)
+                }
+                Response::Offset(value) => println!("[offset] {}", value),
+            }
+        }
+    }
+}

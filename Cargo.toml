@@ -8,6 +8,10 @@ edition = "2018"
 
 [dependencies]
 
+[lib]
+name = "logstreamer"
+path = "src/lib.rs"
+
 [[bin]]
 name = "client_test"
 path = "src/client_test.rs"
@@ -15,3 +19,7 @@ path = "src/client_test.rs"
 [[bin]]
 name = "service"
 path = "src/main.rs"
+
+[[bin]]
+name = "client_console"
+path = "src/client_console.rs"
