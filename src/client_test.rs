@@ -22,7 +22,7 @@ fn send_message(stream: &mut TcpStream, message: ActionMessage) -> Vec<ResponseM
 
 fn main() {
     let mut consumers = Vec::new();
-    for consumer_id in 0..10 {
+    for consumer_id in 0..1 {
         let consumer = thread::spawn(move || {
             thread::sleep_ms(500 / (consumer_id + 1));
             let start = Instant::now();
@@ -45,7 +45,7 @@ fn main() {
             while !offset_found {
                 let response_list = send_message(
                     &mut stream,
-                    ActionMessage::new(Action::Consume(current_offset, 30), consumer_name.clone()),
+                    ActionMessage::new(Action::Consume(current_offset, 1), consumer_name.clone()),
                 );
 
                 let mut last_offset = 0;
@@ -68,7 +68,7 @@ fn main() {
                     }
                     i += 1;
                 }
-                current_offset = last_offset;
+                current_offset = last_offset + 1;
             }
 
             let duration = start.elapsed();
