@@ -20,9 +20,12 @@ fn send_message(stream: &mut TcpStream, message: ActionMessage) -> Vec<ResponseM
     ResponseMessage::parse(&buffer)
 }
 
+const NUMBER_OD_CONSUMERS: u32 = 10;
+const CONSUMER_LIMIT: u32 = 30;
+
 fn main() {
     let mut consumers = Vec::new();
-    for consumer_id in 0..1 {
+    for consumer_id in 0..NUMBER_OD_CONSUMERS {
         let consumer = thread::spawn(move || {
             thread::sleep_ms(500 / (consumer_id + 1));
             let start = Instant::now();
@@ -45,7 +48,7 @@ fn main() {
             while !offset_found {
                 let response_list = send_message(
                     &mut stream,
-                    ActionMessage::new(Action::Consume(current_offset, 1), consumer_name.clone()),
+                    ActionMessage::new(Action::Consume(current_offset, CONSUMER_LIMIT), consumer_name.clone()),
                 );
 
                 let mut last_offset = 0;
@@ -55,7 +58,7 @@ fn main() {
                         if *offset == 1_999_999 {
                             println!("CONSUMER MESSAGE FOUND {}", content);
                             offset_found = true;
-                        } else if i % 50_000 == 0 {
+                        } else if i % 400_000 == 0 {
                             println!("CONSUMED MESSAGE: {} WITH VALUE VALUE: {}", offset, content);
                             let _ = send_message(
                                 &mut stream,
