@@ -76,10 +76,11 @@ fn handle_connection(mut stream: TcpStream, storage: Arc<Storage>) {
 
         let response_list = match message.action {
             Action::Produce(content) => store_data(content, storage.clone()),
-            Action::Consume(limit) => read_data(message.consumer_id, limit, storage.clone()),
+            Action::Consume(offset, limit) => read_data(offset, limit, storage.clone()),
             Action::CommitOffset(offset) => {
                 consume_offset(offset, message.consumer_id, storage.clone())
             }
+            Action::GetOffset => get_offset(message.consumer_id, storage.clone()),
             Action::Invalid => vec![ResponseMessage::new_empty()],
             Action::Quit => return,
         };
@@ -103,13 +104,13 @@ fn store_data(content: String, storage: Arc<Storage>) -> Vec<ResponseMessage> {
     vec![ResponseMessage::new(Response::Offset(offset))]
 }
 
-fn read_data(consumer_id: String, limit: u32, storage: Arc<Storage>) -> Vec<ResponseMessage> {
+fn read_data(offset: u32, limit: u32, storage: Arc<Storage>) -> Vec<ResponseMessage> {
     let mut content_list = Vec::new();
-    let offset = storage.read_for_consumer(consumer_id);
     let mut position = offset as u32;
     let locked_queue = storage.queue.lock().unwrap();
-    for value in
-        locked_queue[offset..(usize::min(offset + limit as usize, locked_queue.len()))].iter()
+    for value in locked_queue
+        [(offset as usize)..(usize::min((offset + limit) as usize, locked_queue.len()))]
+        .iter()
     {
         content_list.push(ResponseMessage::new(Response::Content(
             position,
@@ -124,4 +125,9 @@ fn read_data(consumer_id: String, limit: u32, storage: Arc<Storage>) -> Vec<Resp
 fn consume_offset(offset: u32, consumer_id: String, storage: Arc<Storage>) -> Vec<ResponseMessage> {
     storage.update_offset(consumer_id, offset + 1);
     vec![]
+}
+
+fn get_offset(consumer_id: String, storage: Arc<Storage>) -> Vec<ResponseMessage> {
+    let offset = storage.read_for_consumer(consumer_id);
+    vec![ResponseMessage::new(Response::Offset(offset as u32))]
 }

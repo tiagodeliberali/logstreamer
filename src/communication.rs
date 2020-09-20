@@ -27,8 +27,9 @@ fn write_u32(content: &mut Vec<u8>, value: u32) {
 
 pub enum Action {
     Produce(String),
-    Consume(u32),
+    Consume(u32, u32),
     CommitOffset(u32),
+    GetOffset,
     Quit,
     Invalid,
 }
@@ -56,9 +57,10 @@ impl ActionMessage {
                 Action::Produce(content)
             }
             2 => {
-                let (limit, size) = read_u32(buffer, 1);
-                consumer_id_position += size;
-                Action::Consume(limit)
+                let (offset, offset_size) = read_u32(buffer, 1);
+                let (limit, limit_size) = read_u32(buffer, 5);
+                consumer_id_position += offset_size + limit_size;
+                Action::Consume(offset, limit)
             }
             3 => {
                 let (offset, size) = read_u32(buffer, 1);
@@ -66,6 +68,7 @@ impl ActionMessage {
                 Action::CommitOffset(offset)
             }
             4 => Action::Quit,
+            5 => Action::GetOffset,
             _ => Action::Invalid,
         };
 
@@ -85,8 +88,9 @@ impl ActionMessage {
                 content.push(1);
                 write_string(&mut content, value.clone());
             }
-            Action::Consume(limit) => {
+            Action::Consume(offset, limit) => {
                 content.push(2);
+                write_u32(&mut content, *offset);
                 write_u32(&mut content, *limit);
             }
             Action::CommitOffset(value) => {
@@ -94,6 +98,7 @@ impl ActionMessage {
                 write_u32(&mut content, *value);
             }
             Action::Quit => content.push(4),
+            Action::GetOffset => content.push(5),
             Action::Invalid => content.push(0),
         }
 
@@ -235,22 +240,53 @@ mod tests {
     }
 
     #[test]
+    fn should_convert_get_offset_action_to_vec() {
+        let consumer_id = String::from("consumer_id");
+        let message = ActionMessage::new(Action::GetOffset, consumer_id.clone());
+
+        let parsed_message = message.as_vec();
+
+        assert_eq!(parsed_message[0], 5); // action id
+        assert_eq!(parsed_message[1], 11); // consumer_id length
+        assert_eq!(String::from_utf8_lossy(&parsed_message[2..13]), consumer_id);
+    }
+
+    #[test]
+    fn should_parse_get_offset_action() {
+        let mut bytes = vec![
+            5,  // action id
+            11, // consumer_id length
+        ];
+        bytes.extend_from_slice(b"consumer_id");
+
+        let message = ActionMessage::parse(&bytes[..]);
+
+        assert!(matches!(message.action, Action::GetOffset));
+        assert_eq!(message.consumer_id, "consumer_id");
+    }
+
+    #[test]
     fn should_convert_consume_action_to_vec() {
         let consumer_id = String::from("consumer_id");
-        let message = ActionMessage::new(Action::Consume(10), consumer_id.clone());
+        let message = ActionMessage::new(Action::Consume(3, 10), consumer_id.clone());
 
         let parsed_message = message.as_vec();
 
         assert_eq!(parsed_message[0], 2); // action id
-        assert_eq!(parsed_message[4], 10); // consumer_id length
-        assert_eq!(parsed_message[5], 11); // consumer_id length
-        assert_eq!(String::from_utf8_lossy(&parsed_message[6..17]), consumer_id);
+        assert_eq!(parsed_message[4], 3); // consumer_id length
+        assert_eq!(parsed_message[8], 10); // consumer_id length
+        assert_eq!(parsed_message[9], 11); // consumer_id length
+        assert_eq!(
+            String::from_utf8_lossy(&parsed_message[10..21]),
+            consumer_id
+        );
     }
 
     #[test]
     fn should_parse_consume_action() {
         let mut bytes = vec![
             2, // action id
+            0, 0, 0, 3, // offset
             0, 0, 0, 10, // limit
             11, // consumer_id length
         ];
@@ -258,7 +294,8 @@ mod tests {
 
         let message = ActionMessage::parse(&bytes[..]);
 
-        if let Action::Consume(limit) = message.action {
+        if let Action::Consume(offset, limit) = message.action {
+            assert_eq!(offset, 3);
             assert_eq!(limit, 10);
         } else {
             assert!(false);
