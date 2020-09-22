@@ -22,7 +22,7 @@ fn send_message(stream: &mut TcpStream, message: ActionMessage) -> Vec<ResponseM
 }
 
 const NUMBER_OD_CONSUMERS: u32 = 10;
-const CONSUMER_LIMIT: u32 = 5;
+const CONSUMER_LIMIT: u32 = 30;
 
 fn main() {
     let producer = thread::spawn(move || {
