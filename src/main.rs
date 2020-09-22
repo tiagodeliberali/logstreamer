@@ -1,5 +1,4 @@
 use logstreamer::{Action, ActionMessage, Response, ResponseMessage};
-use std::collections::HashMap;
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -7,14 +6,12 @@ use std::thread;
 
 struct Storage {
     queue: Mutex<Vec<String>>,
-    consumer_offset: Mutex<HashMap<String, usize>>,
 }
 
 impl Storage {
     fn new() -> Storage {
         Storage {
             queue: Mutex::new(Vec::new()),
-            consumer_offset: Mutex::new(HashMap::new()),
         }
     }
 
@@ -22,21 +19,6 @@ impl Storage {
         let mut locked_queue = self.queue.lock().unwrap();
         locked_queue.push(content);
         (locked_queue.len() - 1) as u32
-    }
-
-    fn read_for_consumer(&self, consumer_id: String) -> usize {
-        **self
-            .consumer_offset
-            .lock()
-            .unwrap()
-            .get(&consumer_id)
-            .get_or_insert(&(0 as usize))
-    }
-
-    fn update_offset(&self, consumer_id: String, offset: u32) {
-        let mut locket_offsets = self.consumer_offset.lock().unwrap();
-        let value = locket_offsets.entry(consumer_id).or_insert(0);
-        *value = offset as usize;
     }
 }
 
@@ -77,12 +59,8 @@ fn handle_connection(mut stream: TcpStream, storage: Arc<Storage>) {
         let response_list = match message.action {
             Action::Produce(content) => store_data(content, storage.clone()),
             Action::Consume(offset, limit) => read_data(offset, limit, storage.clone()),
-            Action::CommitOffset(offset) => {
-                consume_offset(offset, message.consumer_id, storage.clone())
-            }
-            Action::GetOffset => get_offset(message.consumer_id, storage.clone()),
-            Action::Invalid => vec![ResponseMessage::new_empty()],
             Action::Quit => return,
+            _ => vec![ResponseMessage::new_empty()],
         };
 
         let mut response_content: Vec<u8> = Vec::new();
@@ -108,8 +86,12 @@ fn read_data(offset: u32, limit: u32, storage: Arc<Storage>) -> Vec<ResponseMess
     let mut content_list = Vec::new();
     let locked_queue = storage.queue.lock().unwrap();
 
+    if locked_queue.is_empty() {
+        return content_list;
+    }
+
     let range_end = usize::min((offset + limit) as usize, locked_queue.len());
-    let range_start = usize::min(offset as usize, range_end);
+    let range_start = usize::min(offset as usize, range_end - 1);
     let mut position = offset as u32;
 
     for value in locked_queue[range_start..range_end].iter() {
@@ -121,14 +103,4 @@ fn read_data(offset: u32, limit: u32, storage: Arc<Storage>) -> Vec<ResponseMess
     }
 
     content_list
-}
-
-fn consume_offset(offset: u32, consumer_id: String, storage: Arc<Storage>) -> Vec<ResponseMessage> {
-    storage.update_offset(consumer_id, offset + 1);
-    vec![]
-}
-
-fn get_offset(consumer_id: String, storage: Arc<Storage>) -> Vec<ResponseMessage> {
-    let offset = storage.read_for_consumer(consumer_id);
-    vec![ResponseMessage::new(Response::Offset(offset as u32))]
 }

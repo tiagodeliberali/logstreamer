@@ -56,17 +56,8 @@ fn main() {
             let mut i = 0;
             let mut offset_found = false;
             let consumer_name = format!("consumer_{}", consumer_id);
-
-            let response_list = send_message(
-                &mut stream,
-                ActionMessage::new(Action::GetOffset, consumer_name.clone()),
-            );
-
             let mut current_offset = 0;
-            if let Response::Offset(value) = response_list.first().unwrap().response {
-                println!("CONSUMER INITIAL OFFSET {}", value);
-                current_offset = value;
-            }
+            let mut consumed_messages = 0;
 
             while !offset_found {
                 thread::sleep(Duration::from_micros(500));
@@ -82,18 +73,12 @@ fn main() {
                 for response in response_list {
                     if let Response::Content(offset, content) = &response.response {
                         last_offset = *offset;
+                        consumed_messages += 1;
                         if *offset == 1_999_999 {
-                            println!("CONSUMER MESSAGE FOUND {}", content);
+                            println!("CONSUMER MESSAGE FOUND {}: {}", consumer_id, content);
                             offset_found = true;
                         } else if i % 400_000 == 0 {
-                            println!("CONSUMED MESSAGE: {} WITH VALUE VALUE: {}", offset, content);
-                            let _ = send_message(
-                                &mut stream,
-                                ActionMessage::new(
-                                    Action::CommitOffset(last_offset),
-                                    consumer_name.clone(),
-                                ),
-                            );
+                            println!("CONSUMED MESSAGE (total {}) {}: {} WITH VALUE VALUE: {}", consumed_messages, consumer_id, offset, content);
                         }
                     }
                     i += 1;
@@ -108,7 +93,7 @@ fn main() {
                 ActionMessage::new(Action::Quit, String::from("consumer")),
             );
 
-            println!("DURATION CONSUMER: {:?}", duration);
+            println!("DURATION CONSUMER (total: {}): {:?}", consumed_messages, duration);
         });
         consumers.push(consumer);
     }

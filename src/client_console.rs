@@ -50,17 +50,6 @@ fn main() {
                 ),
                 to_clean_string(&input.as_bytes()[9..]),
             ),
-            // m - commit offset
-            109 => ActionMessage::new(
-                Action::CommitOffset(
-                    to_clean_string(&input.as_bytes()[1..5])
-                        .parse::<u32>()
-                        .unwrap(),
-                ),
-                to_clean_string(&input.as_bytes()[5..]),
-            ),
-            // g - get offset
-            103 => ActionMessage::new(Action::GetOffset, to_clean_string(&input.as_bytes()[1..])),
             // p - produce
             112 => ActionMessage::new(
                 Action::Produce(to_clean_string(&input.as_bytes()[1..])),
