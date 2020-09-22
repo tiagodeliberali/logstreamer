@@ -60,7 +60,7 @@ fn handle_connection(mut stream: TcpStream, storage: Arc<Storage>) {
             Action::Produce(content) => store_data(content, storage.clone()),
             Action::Consume(offset, limit) => read_data(offset, limit, storage.clone()),
             Action::Quit => return,
-            _ => vec![ResponseMessage::new_empty()],
+            Action::Invalid => vec![ResponseMessage::new_empty()],
         };
 
         let mut response_content: Vec<u8> = Vec::new();
