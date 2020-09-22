@@ -22,16 +22,22 @@ fn send_message(stream: &mut TcpStream, message: ActionMessage) -> Vec<ResponseM
 }
 
 const NUMBER_OD_CONSUMERS: u32 = 10;
-const CONSUMER_LIMIT: u32 = 30;
+const CONSUMER_LIMIT: u32 = 5;
 
 fn main() {
     let producer = thread::spawn(move || {
         let start = Instant::now();
         let mut stream = TcpStream::connect("127.0.0.1:8080").unwrap();
 
+        let create_topic_message = ActionMessage::new(
+            Action::CreateTopic(String::from("topic"), 1),
+            String::new(),
+        );
+        let _ = send_message(&mut stream, create_topic_message);
+
         for i in 0..=2_000_000 {
             let message = ActionMessage::new(
-                Action::Produce(format!("nice message {}", i)),
+                Action::Produce(String::from("topic"), 0, format!("nice message {}", i)),
                 String::new(),
             );
             let _ = send_message(&mut stream, message);
@@ -64,7 +70,7 @@ fn main() {
                 let response_list = send_message(
                     &mut stream,
                     ActionMessage::new(
-                        Action::Consume(current_offset, CONSUMER_LIMIT),
+                        Action::Consume(String::from("topic"), 0, current_offset, CONSUMER_LIMIT),
                         consumer_name.clone(),
                     ),
                 );
@@ -78,7 +84,10 @@ fn main() {
                             println!("CONSUMER MESSAGE FOUND {}: {}", consumer_id, content);
                             offset_found = true;
                         } else if i % 400_000 == 0 {
-                            println!("CONSUMED MESSAGE (total {}) {}: {} WITH VALUE VALUE: {}", consumed_messages, consumer_id, offset, content);
+                            println!(
+                                "CONSUMED MESSAGE (total {}) {}: {} WITH VALUE VALUE: {}",
+                                consumed_messages, consumer_id, offset, content
+                            );
                         }
                     }
                     i += 1;
@@ -93,7 +102,10 @@ fn main() {
                 ActionMessage::new(Action::Quit, String::from("consumer")),
             );
 
-            println!("DURATION CONSUMER (total: {}): {:?}", consumed_messages, duration);
+            println!(
+                "DURATION CONSUMER (total: {}): {:?}",
+                consumed_messages, duration
+            );
         });
         consumers.push(consumer);
     }
