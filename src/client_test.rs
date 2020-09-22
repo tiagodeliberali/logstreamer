@@ -69,7 +69,7 @@ fn main() {
             }
 
             while !offset_found {
-                thread::sleep(Duration::from_micros(300));
+                thread::sleep(Duration::from_micros(500));
                 let response_list = send_message(
                     &mut stream,
                     ActionMessage::new(
