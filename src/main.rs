@@ -25,12 +25,12 @@ impl Storage {
     }
 
     fn read_for_consumer(&self, consumer_id: String) -> usize {
-        self.consumer_offset
+        **self
+            .consumer_offset
             .lock()
             .unwrap()
             .get(&consumer_id)
             .get_or_insert(&(0 as usize))
-            .clone()
     }
 
     fn update_offset(&self, consumer_id: String, offset: u32) {
@@ -106,12 +106,13 @@ fn store_data(content: String, storage: Arc<Storage>) -> Vec<ResponseMessage> {
 
 fn read_data(offset: u32, limit: u32, storage: Arc<Storage>) -> Vec<ResponseMessage> {
     let mut content_list = Vec::new();
-    let mut position = offset as u32;
     let locked_queue = storage.queue.lock().unwrap();
-    for value in locked_queue
-        [(offset as usize)..(usize::min((offset + limit) as usize, locked_queue.len()))]
-        .iter()
-    {
+
+    let range_end = usize::min((offset + limit) as usize, locked_queue.len());
+    let range_start = usize::min(offset as usize, range_end);
+    let mut position = offset as u32;
+
+    for value in locked_queue[range_start..range_end].iter() {
         content_list.push(ResponseMessage::new(Response::Content(
             position,
             value.clone(),
