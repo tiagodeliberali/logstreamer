@@ -1,29 +1,13 @@
+use logstreamer::Cluster;
 use logstreamer::{Action, ActionMessage, Response, ResponseMessage};
+use logstreamer::{Content, TopicAddress};
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 
-struct Storage {
-    queue: Mutex<Vec<String>>,
-}
-
-impl Storage {
-    fn new() -> Storage {
-        Storage {
-            queue: Mutex::new(Vec::new()),
-        }
-    }
-
-    fn add_content(&self, content: String) -> u32 {
-        let mut locked_queue = self.queue.lock().unwrap();
-        locked_queue.push(content);
-        (locked_queue.len() - 1) as u32
-    }
-}
-
 fn main() {
-    let storage = Arc::new(Storage::new());
+    let cluster = Arc::new(Cluster::new());
 
     let listener = match TcpListener::bind("127.0.0.1:8080") {
         Ok(listener) => listener,
@@ -31,11 +15,11 @@ fn main() {
     };
 
     for stream in listener.incoming() {
-        let cloned_storage = storage.clone();
+        let cloned_cluster = cluster.clone();
         match stream {
             Ok(valid_stream) => {
                 thread::spawn(move || {
-                    handle_connection(valid_stream, cloned_storage);
+                    handle_connection(valid_stream, cloned_cluster);
                 });
             }
             Err(err) => println!("Failed to process current stream\n{}", err),
@@ -43,7 +27,7 @@ fn main() {
     }
 }
 
-fn handle_connection(mut stream: TcpStream, storage: Arc<Storage>) {
+fn handle_connection(mut stream: TcpStream, cluster: Arc<Cluster>) {
     loop {
         let mut buffer = [0; 512];
         let _ = match stream.read(&mut buffer) {
@@ -57,10 +41,15 @@ fn handle_connection(mut stream: TcpStream, storage: Arc<Storage>) {
         let message = ActionMessage::parse(&buffer);
 
         let response_list = match message.action {
-            Action::Produce(content) => store_data(content, storage.clone()),
-            Action::Consume(offset, limit) => read_data(offset, limit, storage.clone()),
+            Action::Produce(topic, content) => store_data(topic, content, cluster.clone()),
+            Action::Consume(topic, offset, limit) => {
+                read_data(topic, offset, limit, cluster.clone())
+            }
+            Action::CreateTopic(topic, partition_number) => {
+                add_topic(topic, partition_number, cluster.clone())
+            }
             Action::Quit => return,
-            _ => vec![ResponseMessage::new_empty()],
+            Action::Invalid => vec![ResponseMessage::new_empty()],
         };
 
         let mut response_content: Vec<u8> = Vec::new();
@@ -77,30 +66,51 @@ fn handle_connection(mut stream: TcpStream, storage: Arc<Storage>) {
     }
 }
 
-fn store_data(content: String, storage: Arc<Storage>) -> Vec<ResponseMessage> {
-    let offset = storage.add_content(content);
-    vec![ResponseMessage::new(Response::Offset(offset))]
+fn store_data(
+    topic: TopicAddress,
+    content: Content,
+    cluster: Arc<Cluster>,
+) -> Vec<ResponseMessage> {
+    match cluster.add_content(topic, content) {
+        Some(offset) => vec![ResponseMessage::new(Response::Offset(offset))],
+        None => vec![ResponseMessage::new(Response::Error)],
+    }
 }
 
-fn read_data(offset: u32, limit: u32, storage: Arc<Storage>) -> Vec<ResponseMessage> {
+fn read_data(
+    topic: TopicAddress,
+    offset: u32,
+    limit: u32,
+    cluster: Arc<Cluster>,
+) -> Vec<ResponseMessage> {
     let mut content_list = Vec::new();
-    let locked_queue = storage.queue.lock().unwrap();
 
-    if locked_queue.is_empty() {
-        return content_list;
+    match cluster.get_partition(topic) {
+        Some(partition) => {
+            let locked_partition = partition.queue.lock().unwrap();
+
+            if locked_partition.is_empty() {
+                return content_list;
+            }
+
+            let range_end = usize::min((offset + limit) as usize, locked_partition.len());
+            let range_start = usize::min(offset as usize, range_end - 1);
+            let mut position = offset as u32;
+
+            for value in locked_partition[range_start..range_end].iter() {
+                content_list.push(ResponseMessage::new(Response::Content(
+                    position,
+                    value.clone(),
+                )));
+                position += 1;
+            }
+            content_list
+        }
+        None => vec![ResponseMessage::new(Response::Error)],
     }
+}
 
-    let range_end = usize::min((offset + limit) as usize, locked_queue.len());
-    let range_start = usize::min(offset as usize, range_end - 1);
-    let mut position = offset as u32;
-
-    for value in locked_queue[range_start..range_end].iter() {
-        content_list.push(ResponseMessage::new(Response::Content(
-            position,
-            value.clone(),
-        )));
-        position += 1;
-    }
-
-    content_list
+fn add_topic(topic: String, partition_number: u32, cluster: Arc<Cluster>) -> Vec<ResponseMessage> {
+    cluster.add_topic(topic, partition_number as usize);
+    vec![]
 }

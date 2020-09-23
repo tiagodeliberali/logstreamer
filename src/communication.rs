@@ -1,23 +1,50 @@
-fn read_string(buffer: &[u8], position: usize) -> (String, usize) {
-    let size = buffer[position] as usize;
-    (
-        String::from_utf8_lossy(&buffer[(position + 1)..(position + 1 + size)]).to_string(),
-        size,
-    )
+use crate::core::{Content, TopicAddress};
+
+struct Buffer<'a> {
+    position: usize,
+    buffer: &'a [u8],
 }
 
-fn read_u32(buffer: &[u8], position: usize) -> (u32, usize) {
-    let data: [u8; 4] = [
-        buffer[position],
-        buffer[position + 1],
-        buffer[position + 2],
-        buffer[position + 3],
-    ];
-    (u32::from_be_bytes(data), 4)
+impl<'a> Buffer<'a> {
+    fn new(buffer: &[u8]) -> Buffer {
+        Buffer {
+            position: 0,
+            buffer,
+        }
+    }
+    fn read_u8(&mut self) -> u8 {
+        let data = self.buffer[self.position];
+        self.position += 1;
+        data
+    }
+
+    fn read_string(&mut self) -> String {
+        let string_size = self.read_u32() as usize;
+        let data =
+            String::from_utf8_lossy(&self.buffer[(self.position)..(self.position + string_size)])
+                .to_string();
+        self.position += string_size;
+        data
+    }
+
+    fn read_u32(&mut self) -> u32 {
+        let data: [u8; 4] = [
+            self.buffer[self.position],
+            self.buffer[self.position + 1],
+            self.buffer[self.position + 2],
+            self.buffer[self.position + 3],
+        ];
+        self.position += 4;
+        u32::from_be_bytes(data)
+    }
+
+    fn finished_read(&self) -> bool {
+        self.position >= self.buffer.len()
+    }
 }
 
 fn write_string(content: &mut Vec<u8>, value: String) {
-    content.push(value.len() as u8);
+    write_u32(content, value.len() as u32);
     content.extend_from_slice(value.as_bytes());
 }
 
@@ -26,8 +53,9 @@ fn write_u32(content: &mut Vec<u8>, value: u32) {
 }
 
 pub enum Action {
-    Produce(String),
-    Consume(u32, u32),
+    Produce(TopicAddress, Content),
+    Consume(TopicAddress, u32, u32),
+    CreateTopic(String, u32),
     Quit,
     Invalid,
 }
@@ -46,25 +74,30 @@ impl ActionMessage {
     }
 
     pub fn parse(buffer: &[u8]) -> ActionMessage {
-        let mut consumer_id_position = 1 as usize;
+        let mut data = Buffer::new(buffer);
 
-        let action = match &buffer[0] {
+        let action = match data.read_u8() {
             1 => {
-                let (content, size) = read_string(buffer, 1);
-                consumer_id_position += 1 + size;
-                Action::Produce(content)
+                let topic = TopicAddress::new(data.read_string(), data.read_u32());
+                let content = Content::new(data.read_string());
+                Action::Produce(topic, content)
             }
             2 => {
-                let (offset, offset_size) = read_u32(buffer, 1);
-                let (limit, limit_size) = read_u32(buffer, 5);
-                consumer_id_position += offset_size + limit_size;
-                Action::Consume(offset, limit)
+                let topic = TopicAddress::new(data.read_string(), data.read_u32());
+                let offset = data.read_u32();
+                let limit = data.read_u32();
+                Action::Consume(topic, offset, limit)
+            }
+            3 => {
+                let topic = data.read_string();
+                let partition = data.read_u32();
+                Action::CreateTopic(topic, partition)
             }
             4 => Action::Quit,
             _ => Action::Invalid,
         };
 
-        let (consumer_id, _) = read_string(buffer, consumer_id_position);
+        let consumer_id = data.read_string();
 
         ActionMessage {
             action,
@@ -73,32 +106,42 @@ impl ActionMessage {
     }
 
     pub fn as_vec(&self) -> Vec<u8> {
-        let mut content: Vec<u8> = Vec::new();
+        let mut content_vec: Vec<u8> = Vec::new();
 
         match &self.action {
-            Action::Produce(value) => {
-                content.push(1);
-                write_string(&mut content, value.clone());
+            Action::Produce(topic, content) => {
+                content_vec.push(1);
+                write_string(&mut content_vec, topic.name.clone());
+                write_u32(&mut content_vec, topic.partition);
+                write_string(&mut content_vec, content.value.clone());
             }
-            Action::Consume(offset, limit) => {
-                content.push(2);
-                write_u32(&mut content, *offset);
-                write_u32(&mut content, *limit);
+            Action::Consume(topic, offset, limit) => {
+                content_vec.push(2);
+                write_string(&mut content_vec, topic.name.clone());
+                write_u32(&mut content_vec, topic.partition);
+                write_u32(&mut content_vec, *offset);
+                write_u32(&mut content_vec, *limit);
             }
-            Action::Quit => content.push(4),
-            Action::Invalid => content.push(0),
+            Action::CreateTopic(topic, partition) => {
+                content_vec.push(3);
+                write_string(&mut content_vec, topic.clone());
+                write_u32(&mut content_vec, *partition);
+            }
+            Action::Quit => content_vec.push(4),
+            Action::Invalid => content_vec.push(0),
         }
 
-        write_string(&mut content, self.consumer_id.clone());
+        write_string(&mut content_vec, self.consumer_id.clone());
 
-        content
+        content_vec
     }
 }
 
 pub enum Response {
     Empty,
     Offset(u32),
-    Content(u32, String),
+    Content(u32, Content),
+    Error,
 }
 
 pub struct ResponseMessage {
@@ -118,25 +161,21 @@ impl ResponseMessage {
 
     pub fn parse(buffer: &[u8]) -> Vec<ResponseMessage> {
         let mut result_list = Vec::new();
-        let mut position = 0 as usize;
+        let mut data = Buffer::new(buffer);
         let mut read_all = false;
-        let max_position = buffer.len();
 
         while !read_all {
-            let response = match &buffer[position] {
+            let response = match data.read_u8() {
                 1 => {
-                    position += 1;
-                    let (offset, offset_size) = read_u32(buffer, position);
-                    let (content, content_size) = read_string(buffer, position + offset_size);
-                    position += offset_size + content_size + 1;
+                    let offset = data.read_u32();
+                    let content = Content::new(data.read_string());
                     Response::Content(offset, content)
                 }
                 2 => {
-                    position += 1;
-                    let (offset, offset_size) = read_u32(buffer, position);
-                    position += offset_size;
+                    let offset = data.read_u32();
                     Response::Offset(offset)
                 }
+                3 => Response::Error,
                 _ => {
                     read_all = true;
                     Response::Empty
@@ -144,29 +183,30 @@ impl ResponseMessage {
             };
 
             result_list.push(ResponseMessage { response });
-            read_all = read_all || position >= max_position;
+            read_all = read_all || data.finished_read();
         }
 
         result_list
     }
 
     pub fn as_vec(&self) -> Vec<u8> {
-        let mut content = Vec::new();
+        let mut content_vec = Vec::new();
 
         match &self.response {
-            Response::Empty => content.push(0),
-            Response::Content(offset, value) => {
-                content.push(1);
-                write_u32(&mut content, *offset);
-                write_string(&mut content, value.clone());
+            Response::Empty => content_vec.push(0),
+            Response::Content(offset, content) => {
+                content_vec.push(1);
+                write_u32(&mut content_vec, *offset);
+                write_string(&mut content_vec, content.value.clone());
             }
             Response::Offset(offset) => {
-                content.push(2);
-                write_u32(&mut content, *offset);
+                content_vec.push(2);
+                write_u32(&mut content_vec, *offset);
             }
+            Response::Error => content_vec.push(3),
         }
 
-        content
+        content_vec
     }
 }
 
@@ -175,214 +215,138 @@ mod tests {
     use super::*;
 
     #[test]
-    fn should_convert_invalid_action_to_vec() {
+    fn should_convert_invalid_action() {
         let consumer_id = String::from("consumer_id");
         let message = ActionMessage::new(Action::Invalid, consumer_id.clone());
 
-        let parsed_message = message.as_vec();
-
-        assert_eq!(parsed_message[0], 0); // action id
-        assert_eq!(parsed_message[1], 11); // consumer_id length
-        assert_eq!(String::from_utf8_lossy(&parsed_message[2..13]), consumer_id);
-    }
-
-    #[test]
-    fn should_parse_invalid_action() {
-        let mut bytes = vec![
-            0,  // action id
-            11, // consumer_id length
-        ];
-        bytes.extend_from_slice(b"consumer_id");
-
-        let message = ActionMessage::parse(&bytes[..]);
+        let message_as_vec = message.as_vec();
+        let message = ActionMessage::parse(&message_as_vec[..]);
 
         assert!(matches!(message.action, Action::Invalid));
-        assert_eq!(message.consumer_id, "consumer_id");
+        assert_eq!(message.consumer_id, consumer_id);
     }
 
     #[test]
-    fn should_convert_quit_action_to_vec() {
+    fn should_convert_quit_action() {
         let consumer_id = String::from("consumer_id");
         let message = ActionMessage::new(Action::Quit, consumer_id.clone());
 
-        let parsed_message = message.as_vec();
-
-        assert_eq!(parsed_message[0], 4); // action id
-        assert_eq!(parsed_message[1], 11); // consumer_id length
-        assert_eq!(String::from_utf8_lossy(&parsed_message[2..13]), consumer_id);
-    }
-
-    #[test]
-    fn should_parse_quit_action() {
-        let mut bytes = vec![
-            4,  // action id
-            11, // consumer_id length
-        ];
-        bytes.extend_from_slice(b"consumer_id");
-
-        let message = ActionMessage::parse(&bytes[..]);
+        let message_as_vec = message.as_vec();
+        let message = ActionMessage::parse(&message_as_vec[..]);
 
         assert!(matches!(message.action, Action::Quit));
-        assert_eq!(message.consumer_id, "consumer_id");
+        assert_eq!(message.consumer_id, consumer_id);
     }
 
     #[test]
-    fn should_convert_consume_action_to_vec() {
+    fn should_convert_consume_action() {
+        let topic = TopicAddress::new(String::from("topic"), 1);
         let consumer_id = String::from("consumer_id");
-        let message = ActionMessage::new(Action::Consume(3, 10), consumer_id.clone());
+        let message = ActionMessage::new(Action::Consume(topic, 3, 10), consumer_id.clone());
 
         let parsed_message = message.as_vec();
+        let message = ActionMessage::parse(&parsed_message[..]);
 
-        assert_eq!(parsed_message[0], 2); // action id
-        assert_eq!(parsed_message[4], 3); // consumer_id length
-        assert_eq!(parsed_message[8], 10); // consumer_id length
-        assert_eq!(parsed_message[9], 11); // consumer_id length
-        assert_eq!(
-            String::from_utf8_lossy(&parsed_message[10..21]),
-            consumer_id
-        );
-    }
-
-    #[test]
-    fn should_parse_consume_action() {
-        let mut bytes = vec![
-            2, // action id
-            0, 0, 0, 3, // offset
-            0, 0, 0, 10, // limit
-            11, // consumer_id length
-        ];
-        bytes.extend_from_slice(b"consumer_id");
-
-        let message = ActionMessage::parse(&bytes[..]);
-
-        if let Action::Consume(offset, limit) = message.action {
+        if let Action::Consume(parsed_topic, offset, limit) = message.action {
+            assert_eq!(parsed_topic.name, "topic");
+            assert_eq!(parsed_topic.partition, 1);
             assert_eq!(offset, 3);
             assert_eq!(limit, 10);
         } else {
             assert!(false);
         }
 
-        assert_eq!(message.consumer_id, "consumer_id");
+        assert_eq!(message.consumer_id, consumer_id);
     }
 
     #[test]
-    fn should_convert_produce_action_to_vec() {
+    fn should_convert_produce_action() {
         let consumer_id = String::from("consumer_id");
-        let message = ActionMessage::new(
-            Action::Produce(String::from("Message Content")),
-            consumer_id.clone(),
-        );
+        let topic = TopicAddress::new(String::from("topic"), 1);
+        let content = Content::new(String::from("Message Content"));
+
+        let message = ActionMessage::new(Action::Produce(topic, content), consumer_id.clone());
 
         let parsed_message = message.as_vec();
+        let message = ActionMessage::parse(&parsed_message[..]);
 
-        assert_eq!(parsed_message[0], 1); // action id
-        assert_eq!(parsed_message[1], 15); // consumer_id length
-        assert_eq!(
-            String::from_utf8_lossy(&parsed_message[2..17]),
-            "Message Content"
-        );
-        assert_eq!(parsed_message[17], 11); // consumer_id length
-        assert_eq!(
-            String::from_utf8_lossy(&parsed_message[18..29]),
-            consumer_id
-        );
-    }
-
-    #[test]
-    fn should_parse_produce_action() {
-        let mut bytes = vec![
-            1,  // action id
-            15, // content length
-        ];
-        bytes.extend_from_slice(b"Message Content");
-        bytes.push(11);
-        bytes.extend_from_slice(b"consumer_id");
-
-        let message = ActionMessage::parse(&bytes[..]);
-
-        if let Action::Produce(value) = message.action {
-            assert_eq!(value, "Message Content");
+        if let Action::Produce(parsed_topic, content) = message.action {
+            assert_eq!(parsed_topic.name, "topic");
+            assert_eq!(parsed_topic.partition, 1);
+            assert_eq!(content.value, "Message Content");
         } else {
             assert!(false);
         }
 
-        assert_eq!(message.consumer_id, "consumer_id");
+        assert_eq!(message.consumer_id, consumer_id);
     }
 
     #[test]
-    fn should_convert_empty_response_to_vec() {
+    fn should_convert_create_topic_action() {
+        let consumer_id = String::from("consumer_id");
+        let topic = String::from("topic");
+
+        let message =
+            ActionMessage::new(Action::CreateTopic(topic.clone(), 1), consumer_id.clone());
+
+        let parsed_message = message.as_vec();
+        let message = ActionMessage::parse(&parsed_message[..]);
+
+        if let Action::CreateTopic(parsed_topic, partition) = message.action {
+            assert_eq!(parsed_topic, topic);
+            assert_eq!(partition, 1);
+        } else {
+            assert!(false);
+        }
+
+        assert_eq!(message.consumer_id, consumer_id);
+    }
+
+    #[test]
+    fn should_convert_empty_response() {
         let message = ResponseMessage::new(Response::Empty);
 
         let parsed_message = message.as_vec();
-
-        assert_eq!(parsed_message[0], 0); // action id
-    }
-
-    #[test]
-    fn should_parse_empty_response() {
-        let bytes = vec![
-            0, // action id
-        ];
-
-        let message = ResponseMessage::parse(&bytes[..]);
+        let message = ResponseMessage::parse(&parsed_message[..]);
         let message = message.first().unwrap();
 
         assert!(matches!(message.response, Response::Empty));
     }
 
     #[test]
-    fn should_convert_content_response_to_vec() {
-        let message = ResponseMessage::new(Response::Content(100, String::from("nice content")));
+    fn should_convert_error_response() {
+        let message = ResponseMessage::new(Response::Error);
 
         let parsed_message = message.as_vec();
+        let message = ResponseMessage::parse(&parsed_message[..]);
+        let message = message.first().unwrap();
 
-        assert_eq!(parsed_message[0], 1); // action id
-        assert_eq!(parsed_message[4], 100); // action id
-        assert_eq!(parsed_message[5], 12); // content length
-        assert_eq!(
-            String::from_utf8_lossy(&parsed_message[6..18]),
-            "nice content"
-        );
+        assert!(matches!(message.response, Response::Error));
     }
 
     #[test]
-    fn should_parse_consume_response() {
-        let mut bytes = vec![
-            1, // action id
-            0, 0, 0, 100, // offset (4 bytes)
-            12,  // content length
-        ];
-        bytes.extend_from_slice(b"nice content");
+    fn should_convert_content_response() {
+        let content = Content::new(String::from("nice content"));
+        let message = ResponseMessage::new(Response::Content(100, content));
 
-        let message = ResponseMessage::parse(&bytes[..]);
+        let parsed_message = message.as_vec();
+        let message = ResponseMessage::parse(&parsed_message[..]);
         let message = message.first().unwrap();
 
-        if let Response::Content(offset, value) = &message.response {
+        if let Response::Content(offset, content) = &message.response {
             assert_eq!(*offset, 100);
-            assert_eq!(value, "nice content");
+            assert_eq!(content.value, "nice content");
         } else {
             assert!(false);
         }
     }
 
     #[test]
-    fn should_convert_offset_response_to_vec() {
+    fn should_convert_offset_response() {
         let message = ResponseMessage::new(Response::Offset(100));
 
         let parsed_message = message.as_vec();
-
-        assert_eq!(parsed_message[0], 2); // action id
-        assert_eq!(parsed_message[4], 100); // offset
-    }
-
-    #[test]
-    fn should_parse_offset_response() {
-        let bytes = vec![
-            2, // action id
-            0, 0, 0, 100, // offset (4 bytes)
-        ];
-
-        let message = ResponseMessage::parse(&bytes[..]);
+        let message = ResponseMessage::parse(&parsed_message[..]);
         let message = message.first().unwrap();
 
         if let Response::Offset(value) = message.response {
@@ -393,34 +357,35 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_multiple_consumes_response() {
-        let mut bytes = vec![
-            1, // action id
-            0, 0, 0, 100, // offset (4 bytes)
-            12,  // content length
-        ];
-        bytes.extend_from_slice(b"nice content");
+    fn should_parse_mixed_response() {
+        let mut bytes = Vec::new();
 
-        bytes.extend_from_slice(&[
-            2, // action id
-            0, 0, 0, 101, // offset (4 bytes)
-        ]);
+        bytes.extend_from_slice(
+            &ResponseMessage::new(Response::Content(
+                100,
+                Content::new(String::from("nice content")),
+            ))
+            .as_vec(),
+        );
 
-        bytes.extend_from_slice(&[
-            1, // action id
-            0, 0, 0, 102, // offset (4 bytes)
-            12,  // content length
-        ]);
-        bytes.extend_from_slice(b"last content");
+        bytes.extend_from_slice(&ResponseMessage::new(Response::Offset(101)).as_vec());
+
+        bytes.extend_from_slice(
+            &ResponseMessage::new(Response::Content(
+                102,
+                Content::new(String::from("last content")),
+            ))
+            .as_vec(),
+        );
 
         let message_list = ResponseMessage::parse(&bytes[..]);
 
         assert_eq!(message_list.len(), 3);
 
-        let message = message_list.first().unwrap();
-        if let Response::Content(offset, value) = &message.response {
+        let message = message_list.get(0).unwrap();
+        if let Response::Content(offset, content) = &message.response {
             assert_eq!(*offset, 100);
-            assert_eq!(value, "nice content");
+            assert_eq!(content.value, "nice content");
         } else {
             assert!(false);
         }
@@ -433,61 +398,71 @@ mod tests {
         }
 
         let message = message_list.get(2).unwrap();
-        if let Response::Content(offset, value) = &message.response {
+        if let Response::Content(offset, content) = &message.response {
             assert_eq!(*offset, 102);
-            assert_eq!(value, "last content");
+            assert_eq!(content.value, "last content");
         } else {
             assert!(false);
         }
     }
 
     #[test]
-    fn should_parse_mixed_responses() {
-        let mut bytes = vec![
-            1, // action id
-            0, 0, 0, 100, // offset (4 bytes)
-            12,  // content length
-        ];
-        bytes.extend_from_slice(b"nice content");
+    fn should_parse_multiple_content_responses() {
+        let mut bytes = Vec::new();
 
-        bytes.extend_from_slice(&[
-            1, // action id
-            0, 0, 0, 101, // offset (4 bytes)
-            13,  // content length
-        ]);
-        bytes.extend_from_slice(b"other content");
+        bytes.extend_from_slice(
+            &ResponseMessage::new(Response::Content(
+                100,
+                Content::new(String::from("nice content")),
+            ))
+            .as_vec(),
+        );
 
-        bytes.extend_from_slice(&[
-            1, // action id
-            0, 0, 0, 102, // offset (4 bytes)
-            12,  // content length
-        ]);
-        bytes.extend_from_slice(b"last content");
+        bytes.extend_from_slice(
+            &ResponseMessage::new(Response::Content(
+                101,
+                Content::new(String::from("other content")),
+            ))
+            .as_vec(),
+        );
+
+        bytes.extend_from_slice(&ResponseMessage::new(Response::Error).as_vec());
+
+        bytes.extend_from_slice(
+            &ResponseMessage::new(Response::Content(
+                102,
+                Content::new(String::from("last content")),
+            ))
+            .as_vec(),
+        );
 
         let message_list = ResponseMessage::parse(&bytes[..]);
 
-        assert_eq!(message_list.len(), 3);
+        assert_eq!(message_list.len(), 4);
 
         let message = message_list.first().unwrap();
-        if let Response::Content(offset, value) = &message.response {
+        if let Response::Content(offset, content) = &message.response {
             assert_eq!(*offset, 100);
-            assert_eq!(value, "nice content");
+            assert_eq!(content.value, "nice content");
         } else {
             assert!(false);
         }
 
         let message = message_list.get(1).unwrap();
-        if let Response::Content(offset, value) = &message.response {
+        if let Response::Content(offset, content) = &message.response {
             assert_eq!(*offset, 101);
-            assert_eq!(value, "other content");
+            assert_eq!(content.value, "other content");
         } else {
             assert!(false);
         }
 
         let message = message_list.get(2).unwrap();
-        if let Response::Content(offset, value) = &message.response {
+        assert!(matches!(message.response, Response::Error));
+
+        let message = message_list.get(3).unwrap();
+        if let Response::Content(offset, content) = &message.response {
             assert_eq!(*offset, 102);
-            assert_eq!(value, "last content");
+            assert_eq!(content.value, "last content");
         } else {
             assert!(false);
         }

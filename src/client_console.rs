@@ -1,4 +1,4 @@
-use logstreamer::{Action, ActionMessage, Response, ResponseMessage};
+use logstreamer::{Action, ActionMessage, Content, Response, ResponseMessage, TopicAddress};
 use std::io;
 use std::io::prelude::*;
 use std::net::TcpStream;
@@ -41,6 +41,7 @@ fn main() {
             // c - consume
             99 => ActionMessage::new(
                 Action::Consume(
+                    TopicAddress::new(String::from("topic"), 0),
                     to_clean_string(&input.as_bytes()[1..5])
                         .parse::<u32>()
                         .unwrap(),
@@ -52,9 +53,14 @@ fn main() {
             ),
             // p - produce
             112 => ActionMessage::new(
-                Action::Produce(to_clean_string(&input.as_bytes()[1..])),
+                Action::Produce(
+                    TopicAddress::new(String::from("topic"), 0),
+                    Content::new(to_clean_string(&input.as_bytes()[1..])),
+                ),
                 String::new(),
             ),
+            // n - new topic
+            110 => ActionMessage::new(Action::CreateTopic(String::from("topic"), 1), String::new()),
             // q - quit
             113 => {
                 exit = true;
@@ -68,8 +74,11 @@ fn main() {
         for response in response_list {
             match response.response {
                 Response::Empty => println!("[empty]"),
-                Response::Content(offset, value) => println!("[content: {}] {}", offset, value),
+                Response::Content(offset, value) => {
+                    println!("[content: {}] {}", offset, value.value)
+                }
                 Response::Offset(value) => println!("[offset] {}", value),
+                Response::Error => println!("[error]"),
             }
         }
     }
