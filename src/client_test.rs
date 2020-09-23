@@ -1,77 +1,136 @@
-use std::io::prelude::*;
+use logstreamer::{
+    Action, ActionMessage, Content, OffsetValue, Response, ResponseMessage, TopicAddress,
+};
+use std::io::prelude::{Read, Write};
 use std::net::TcpStream;
 use std::thread;
+use std::time::Duration;
 use std::time::Instant;
 
+fn send_message(stream: &mut TcpStream, message: ActionMessage) -> Vec<ResponseMessage> {
+    stream.write_all(&message.as_vec()[..]).unwrap();
+    stream.flush().unwrap();
+
+    let mut buffer = [0; 1024];
+    let _ = match &stream.read(&mut buffer) {
+        Ok(value) => value,
+        Err(err) => {
+            println!("Failed to read stream\n{}", err);
+            return vec![ResponseMessage::new_empty()];
+        }
+    };
+
+    ResponseMessage::parse(&buffer)
+}
+
+const NUMBER_OF_PRODUCERS: u32 = 10;
+const NUMBER_OF_CONSUMERS: u32 = 10;
+const CONSUMER_LIMIT: u32 = 30;
+
 fn main() {
-    let consumer = thread::spawn(move || {
-        let last_value = b"nice message 1999999";
-        let start = Instant::now();
-        let mut stream = TcpStream::connect("127.0.0.1:8080").unwrap();
-        let mut i = 0;
+    let mut producers = Vec::new();
+    for producer_id in 0..NUMBER_OF_PRODUCERS {
+        producers.push(thread::spawn(move || {
+            let start = Instant::now();
+            let mut stream = TcpStream::connect("127.0.0.1:8080").unwrap();
 
-        loop {
-            stream.write_all("c\r\n".as_bytes()).unwrap();
-            stream.flush().unwrap();
-            let mut buffer = [0; 512];
-            let size = match stream.read(&mut buffer) {
-                Ok(value) => value,
-                Err(err) => {
-                    println!("Failed to read stream\n{}", err);
-                    continue;
+            let create_topic_message = ActionMessage::new(
+                Action::CreateTopic(String::from("topic"), NUMBER_OF_PRODUCERS),
+                String::new(),
+            );
+            let _ = send_message(&mut stream, create_topic_message);
+
+            let mut content_list = Vec::new();
+            for i in 0..=2_000_000 {
+                if i != 0 && i % 30 == 0 {
+                    let message = ActionMessage::new(
+                        Action::Produce(
+                            TopicAddress::new(String::from("topic"), producer_id),
+                            content_list.clone(),
+                        ),
+                        String::new(),
+                    );
+                    let _ = send_message(&mut stream, message);
+                    content_list.clear();
                 }
-            };
+                content_list.push(Content::new(format!("nice message {}", i)));
 
-            if buffer.starts_with(last_value) {
-                println!(
-                    "CONSUMER MESSAGE FOUND {}",
-                    String::from_utf8_lossy(&buffer[..size])
-                );
-                break;
-            }
-
-            if i % 50_000 == 0 {
-                print!(
-                    "CONSUMED MESSAGE: {} WITH VALUE VALUE: {}",
-                    i,
-                    String::from_utf8_lossy(&buffer[..size])
-                );
-            }
-            i += 1;
-        }
-
-        let duration = start.elapsed();
-
-        println!("DURATION CONSUMER: {:?}", duration);
-    });
-
-    let producer = thread::spawn(move || {
-        let start = Instant::now();
-        let mut stream = TcpStream::connect("127.0.0.1:8080").unwrap();
-
-        for i in 0..2_000_000 {
-            stream
-                .write_all(format!("pnice message {}\r\n", i).as_bytes())
-                .unwrap();
-            stream.flush().unwrap();
-            let mut buffer = [0; 512];
-            let _ = match stream.read(&mut buffer) {
-                Ok(value) => value,
-                Err(err) => {
-                    println!("Failed to read stream\n{}", err);
-                    continue;
+                if i % 400_000 == 0 {
+                    println!("PRODUCED MESSAGE {}: {}", producer_id, i);
                 }
-            };
-
-            if i % 50_000 == 0 {
-                println!("PRODUCED MESSAGE: {}", i);
             }
-        }
-        let duration = start.elapsed();
+            let duration = start.elapsed();
 
-        println!("DURATION PRODUCER: {:?}", duration);
-    });
+            let _ = send_message(&mut stream, ActionMessage::new(Action::Quit, String::new()));
 
-    consumer.join().unwrap();
-    producer.join().unwrap();
+            println!("DURATION PRODUCER: {:?}", duration);
+        }));
+    }
+
+    let mut consumers = Vec::new();
+    for consumer_id in 0..NUMBER_OF_CONSUMERS {
+        let consumer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(500u64 / (consumer_id as u64 + 1)));
+            let start = Instant::now();
+            let mut stream = TcpStream::connect("127.0.0.1:8080").unwrap();
+            let mut i = 0;
+            let mut offset_found = false;
+            let consumer_name = format!("consumer_{}", consumer_id);
+            let mut current_offset = 0;
+            let mut consumed_messages = 0;
+
+            while !offset_found {
+                let response_list = send_message(
+                    &mut stream,
+                    ActionMessage::new(
+                        Action::Consume(
+                            TopicAddress::new(String::from("topic"), consumer_id),
+                            OffsetValue(current_offset),
+                            CONSUMER_LIMIT,
+                        ),
+                        consumer_name.clone(),
+                    ),
+                );
+
+                let mut last_offset = 0;
+                for response in response_list {
+                    if let Response::Content(offset, content) = &response.response {
+                        last_offset = offset.0;
+                        consumed_messages += 1;
+                        if last_offset == 1_999_999 {
+                            println!("CONSUMER MESSAGE FOUND {}: {}", consumer_id, content.value);
+                            offset_found = true;
+                        } else if i % 400_000 == 0 {
+                            println!(
+                                "CONSUMED MESSAGE (total {}) {}: {} WITH VALUE VALUE: {}",
+                                consumed_messages, consumer_id, offset.0, content.value
+                            );
+                        }
+                    }
+                    i += 1;
+                }
+                current_offset = last_offset + 1;
+            }
+
+            let duration = start.elapsed();
+
+            let _ = send_message(
+                &mut stream,
+                ActionMessage::new(Action::Quit, String::from("consumer")),
+            );
+
+            println!(
+                "DURATION CONSUMER (total: {}): {:?}",
+                consumed_messages, duration
+            );
+        });
+        consumers.push(consumer);
+    }
+
+    for consumer in consumers {
+        consumer.join().unwrap();
+    }
+    for producer in producers {
+        producer.join().unwrap();
+    }
 }
