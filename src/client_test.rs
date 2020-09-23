@@ -1,4 +1,6 @@
-use logstreamer::{Action, ActionMessage, Content, Response, ResponseMessage, TopicAddress};
+use logstreamer::{
+    Action, ActionMessage, Content, OffsetValue, Response, ResponseMessage, TopicAddress,
+};
 use std::io::prelude::{Read, Write};
 use std::net::TcpStream;
 use std::thread;
@@ -79,7 +81,7 @@ fn main() {
                     ActionMessage::new(
                         Action::Consume(
                             TopicAddress::new(String::from("topic"), consumer_id),
-                            current_offset,
+                            OffsetValue(current_offset),
                             CONSUMER_LIMIT,
                         ),
                         consumer_name.clone(),
@@ -89,15 +91,15 @@ fn main() {
                 let mut last_offset = 0;
                 for response in response_list {
                     if let Response::Content(offset, content) = &response.response {
-                        last_offset = *offset;
+                        last_offset = offset.0;
                         consumed_messages += 1;
-                        if *offset == 1_999_999 {
+                        if last_offset == 1_999_999 {
                             println!("CONSUMER MESSAGE FOUND {}: {}", consumer_id, content.value);
                             offset_found = true;
                         } else if i % 400_000 == 0 {
                             println!(
                                 "CONSUMED MESSAGE (total {}) {}: {} WITH VALUE VALUE: {}",
-                                consumed_messages, consumer_id, offset, content.value
+                                consumed_messages, consumer_id, offset.0, content.value
                             );
                         }
                     }

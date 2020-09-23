@@ -1,3 +1,5 @@
+pub struct OffsetValue(pub u32);
+
 pub struct TopicAddress {
     pub name: String,
     pub partition: u32,

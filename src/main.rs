@@ -1,5 +1,4 @@
-use logstreamer::Cluster;
-use logstreamer::{Action, ActionMessage, Response, ResponseMessage};
+use logstreamer::{Action, ActionMessage, Cluster, OffsetValue, Response, ResponseMessage};
 use logstreamer::{Content, TopicAddress};
 use std::io::prelude::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -79,7 +78,7 @@ fn store_data(
 
 fn read_data(
     topic: TopicAddress,
-    offset: u32,
+    offset: OffsetValue,
     limit: u32,
     cluster: Arc<Cluster>,
 ) -> Vec<ResponseMessage> {
@@ -93,13 +92,13 @@ fn read_data(
                 return content_list;
             }
 
-            let range_end = usize::min((offset + limit) as usize, locked_partition.len());
-            let range_start = usize::min(offset as usize, range_end - 1);
-            let mut position = offset as u32;
+            let range_end = usize::min((offset.0 + limit) as usize, locked_partition.len());
+            let range_start = usize::min(offset.0 as usize, range_end - 1);
+            let mut position = offset.0 as u32;
 
             for value in locked_partition[range_start..range_end].iter() {
                 content_list.push(ResponseMessage::new(Response::Content(
-                    position,
+                    OffsetValue(position),
                     value.clone(),
                 )));
                 position += 1;

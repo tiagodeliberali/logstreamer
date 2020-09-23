@@ -1,4 +1,4 @@
-use crate::core::{Content, TopicAddress};
+use crate::core::{Content, OffsetValue, TopicAddress};
 
 struct Buffer<'a> {
     position: usize,
@@ -54,7 +54,7 @@ fn write_u32(content: &mut Vec<u8>, value: u32) {
 
 pub enum Action {
     Produce(TopicAddress, Content),
-    Consume(TopicAddress, u32, u32),
+    Consume(TopicAddress, OffsetValue, u32),
     CreateTopic(String, u32),
     Quit,
     Invalid,
@@ -84,7 +84,7 @@ impl ActionMessage {
             }
             2 => {
                 let topic = TopicAddress::new(data.read_string(), data.read_u32());
-                let offset = data.read_u32();
+                let offset = OffsetValue(data.read_u32());
                 let limit = data.read_u32();
                 Action::Consume(topic, offset, limit)
             }
@@ -119,7 +119,7 @@ impl ActionMessage {
                 content_vec.push(2);
                 write_string(&mut content_vec, topic.name.clone());
                 write_u32(&mut content_vec, topic.partition);
-                write_u32(&mut content_vec, *offset);
+                write_u32(&mut content_vec, offset.0);
                 write_u32(&mut content_vec, *limit);
             }
             Action::CreateTopic(topic, partition) => {
@@ -139,8 +139,8 @@ impl ActionMessage {
 
 pub enum Response {
     Empty,
-    Offset(u32),
-    Content(u32, Content),
+    Offset(OffsetValue),
+    Content(OffsetValue, Content),
     Error,
 }
 
@@ -167,12 +167,12 @@ impl ResponseMessage {
         while !read_all {
             let response = match data.read_u8() {
                 1 => {
-                    let offset = data.read_u32();
+                    let offset = OffsetValue(data.read_u32());
                     let content = Content::new(data.read_string());
                     Response::Content(offset, content)
                 }
                 2 => {
-                    let offset = data.read_u32();
+                    let offset = OffsetValue(data.read_u32());
                     Response::Offset(offset)
                 }
                 3 => Response::Error,
@@ -196,12 +196,12 @@ impl ResponseMessage {
             Response::Empty => content_vec.push(0),
             Response::Content(offset, content) => {
                 content_vec.push(1);
-                write_u32(&mut content_vec, *offset);
+                write_u32(&mut content_vec, offset.0);
                 write_string(&mut content_vec, content.value.clone());
             }
             Response::Offset(offset) => {
                 content_vec.push(2);
-                write_u32(&mut content_vec, *offset);
+                write_u32(&mut content_vec, offset.0);
             }
             Response::Error => content_vec.push(3),
         }
@@ -242,7 +242,10 @@ mod tests {
     fn should_convert_consume_action() {
         let topic = TopicAddress::new(String::from("topic"), 1);
         let consumer_id = String::from("consumer_id");
-        let message = ActionMessage::new(Action::Consume(topic, 3, 10), consumer_id.clone());
+        let message = ActionMessage::new(
+            Action::Consume(topic, OffsetValue(3), 10),
+            consumer_id.clone(),
+        );
 
         let parsed_message = message.as_vec();
         let message = ActionMessage::parse(&parsed_message[..]);
@@ -250,7 +253,7 @@ mod tests {
         if let Action::Consume(parsed_topic, offset, limit) = message.action {
             assert_eq!(parsed_topic.name, "topic");
             assert_eq!(parsed_topic.partition, 1);
-            assert_eq!(offset, 3);
+            assert_eq!(offset.0, 3);
             assert_eq!(limit, 10);
         } else {
             assert!(false);
@@ -327,14 +330,14 @@ mod tests {
     #[test]
     fn should_convert_content_response() {
         let content = Content::new(String::from("nice content"));
-        let message = ResponseMessage::new(Response::Content(100, content));
+        let message = ResponseMessage::new(Response::Content(OffsetValue(100), content));
 
         let parsed_message = message.as_vec();
         let message = ResponseMessage::parse(&parsed_message[..]);
         let message = message.first().unwrap();
 
         if let Response::Content(offset, content) = &message.response {
-            assert_eq!(*offset, 100);
+            assert_eq!(offset.0, 100);
             assert_eq!(content.value, "nice content");
         } else {
             assert!(false);
@@ -343,14 +346,14 @@ mod tests {
 
     #[test]
     fn should_convert_offset_response() {
-        let message = ResponseMessage::new(Response::Offset(100));
+        let message = ResponseMessage::new(Response::Offset(OffsetValue(100)));
 
         let parsed_message = message.as_vec();
         let message = ResponseMessage::parse(&parsed_message[..]);
         let message = message.first().unwrap();
 
         if let Response::Offset(value) = message.response {
-            assert_eq!(value, 100);
+            assert_eq!(value.0, 100);
         } else {
             assert!(false);
         }
@@ -362,17 +365,17 @@ mod tests {
 
         bytes.extend_from_slice(
             &ResponseMessage::new(Response::Content(
-                100,
+                OffsetValue(100),
                 Content::new(String::from("nice content")),
             ))
             .as_vec(),
         );
 
-        bytes.extend_from_slice(&ResponseMessage::new(Response::Offset(101)).as_vec());
+        bytes.extend_from_slice(&ResponseMessage::new(Response::Offset(OffsetValue(101))).as_vec());
 
         bytes.extend_from_slice(
             &ResponseMessage::new(Response::Content(
-                102,
+                OffsetValue(102),
                 Content::new(String::from("last content")),
             ))
             .as_vec(),
@@ -384,7 +387,7 @@ mod tests {
 
         let message = message_list.get(0).unwrap();
         if let Response::Content(offset, content) = &message.response {
-            assert_eq!(*offset, 100);
+            assert_eq!(offset.0, 100);
             assert_eq!(content.value, "nice content");
         } else {
             assert!(false);
@@ -392,14 +395,14 @@ mod tests {
 
         let message = message_list.get(1).unwrap();
         if let Response::Offset(offset) = &message.response {
-            assert_eq!(*offset, 101);
+            assert_eq!(offset.0, 101);
         } else {
             assert!(false);
         }
 
         let message = message_list.get(2).unwrap();
         if let Response::Content(offset, content) = &message.response {
-            assert_eq!(*offset, 102);
+            assert_eq!(offset.0, 102);
             assert_eq!(content.value, "last content");
         } else {
             assert!(false);
@@ -412,7 +415,7 @@ mod tests {
 
         bytes.extend_from_slice(
             &ResponseMessage::new(Response::Content(
-                100,
+                OffsetValue(100),
                 Content::new(String::from("nice content")),
             ))
             .as_vec(),
@@ -420,7 +423,7 @@ mod tests {
 
         bytes.extend_from_slice(
             &ResponseMessage::new(Response::Content(
-                101,
+                OffsetValue(101),
                 Content::new(String::from("other content")),
             ))
             .as_vec(),
@@ -430,7 +433,7 @@ mod tests {
 
         bytes.extend_from_slice(
             &ResponseMessage::new(Response::Content(
-                102,
+                OffsetValue(102),
                 Content::new(String::from("last content")),
             ))
             .as_vec(),
@@ -442,7 +445,7 @@ mod tests {
 
         let message = message_list.first().unwrap();
         if let Response::Content(offset, content) = &message.response {
-            assert_eq!(*offset, 100);
+            assert_eq!(offset.0, 100);
             assert_eq!(content.value, "nice content");
         } else {
             assert!(false);
@@ -450,7 +453,7 @@ mod tests {
 
         let message = message_list.get(1).unwrap();
         if let Response::Content(offset, content) = &message.response {
-            assert_eq!(*offset, 101);
+            assert_eq!(offset.0, 101);
             assert_eq!(content.value, "other content");
         } else {
             assert!(false);
@@ -461,7 +464,7 @@ mod tests {
 
         let message = message_list.get(3).unwrap();
         if let Response::Content(offset, content) = &message.response {
-            assert_eq!(*offset, 102);
+            assert_eq!(offset.0, 102);
             assert_eq!(content.value, "last content");
         } else {
             assert!(false);

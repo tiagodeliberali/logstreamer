@@ -1,4 +1,4 @@
-use crate::core::{Content, TopicAddress};
+use crate::core::{Content, OffsetValue, TopicAddress};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::{Mutex, RwLock};
@@ -33,13 +33,13 @@ impl Cluster {
         }
     }
 
-    pub fn add_content(&self, topic: TopicAddress, content: Content) -> Option<u32> {
+    pub fn add_content(&self, topic: TopicAddress, content: Content) -> Option<OffsetValue> {
         let topics = self.topics.read().unwrap();
         match topics.get(&topic.name) {
             Some(partition_list) => {
                 let partition = partition_list.get(topic.partition as usize).unwrap();
                 let offset = partition.add_content(content);
-                Some(offset as u32)
+                Some(offset)
             }
             None => None,
         }
@@ -57,9 +57,9 @@ impl Partition {
         }
     }
 
-    pub fn add_content(&self, content: Content) -> u32 {
+    pub fn add_content(&self, content: Content) -> OffsetValue {
         let mut locked_queue = self.queue.lock().unwrap();
         locked_queue.push(content);
-        (locked_queue.len() - 1) as u32
+        OffsetValue(locked_queue.len() as u32 - 1)
     }
 }

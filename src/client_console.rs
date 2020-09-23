@@ -1,4 +1,6 @@
-use logstreamer::{Action, ActionMessage, Content, Response, ResponseMessage, TopicAddress};
+use logstreamer::{
+    Action, ActionMessage, Content, OffsetValue, Response, ResponseMessage, TopicAddress,
+};
 use std::io;
 use std::io::prelude::{Read, Write};
 use std::net::TcpStream;
@@ -42,9 +44,11 @@ fn main() {
             99 => ActionMessage::new(
                 Action::Consume(
                     TopicAddress::new(String::from("topic"), 0),
-                    to_clean_string(&input.as_bytes()[1..5])
-                        .parse::<u32>()
-                        .unwrap(),
+                    OffsetValue(
+                        to_clean_string(&input.as_bytes()[1..5])
+                            .parse::<u32>()
+                            .unwrap(),
+                    ),
                     to_clean_string(&input.as_bytes()[5..9])
                         .parse::<u32>()
                         .unwrap(),
@@ -75,9 +79,9 @@ fn main() {
             match response.response {
                 Response::Empty => println!("[empty]"),
                 Response::Content(offset, value) => {
-                    println!("[content: {}] {}", offset, value.value)
+                    println!("[content: {}] {}", offset.0, value.value)
                 }
-                Response::Offset(value) => println!("[offset] {}", value),
+                Response::Offset(value) => println!("[offset] {}", value.0),
                 Response::Error => println!("[error]"),
             }
         }
