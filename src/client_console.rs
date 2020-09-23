@@ -62,13 +62,7 @@ fn main() {
                 String::new(),
             ),
             // n - new topic
-            110 => ActionMessage::new(
-                Action::CreateTopic(
-                    String::from("topic"),
-                    1,
-                ),
-                String::new(),
-            ),
+            110 => ActionMessage::new(Action::CreateTopic(String::from("topic"), 1), String::new()),
             // q - quit
             113 => {
                 exit = true;

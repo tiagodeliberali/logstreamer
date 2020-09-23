@@ -1,22 +1,44 @@
-fn read_string(buffer: &[u8], position: usize) -> (String, usize) {
-    let (string_size, size) = read_u32(buffer, position);
-    (
-        String::from_utf8_lossy(
-            &buffer[(position + size)..(position + size + string_size as usize)],
-        )
-        .to_string(),
-        string_size as usize + size,
-    )
+struct Buffer<'a> {
+    position: usize,
+    buffer: &'a [u8],
 }
 
-fn read_u32(buffer: &[u8], position: usize) -> (u32, usize) {
-    let data: [u8; 4] = [
-        buffer[position],
-        buffer[position + 1],
-        buffer[position + 2],
-        buffer[position + 3],
-    ];
-    (u32::from_be_bytes(data), 4)
+impl<'a> Buffer<'a> {
+    fn new(buffer: &[u8]) -> Buffer {
+        Buffer {
+            position: 0,
+            buffer,
+        }
+    }
+    fn read_u8(&mut self) -> u8 {
+        let data = self.buffer[self.position];
+        self.position += 1;
+        data
+    }
+
+    fn read_string(&mut self) -> String {
+        let string_size = self.read_u32() as usize;
+        let data =
+            String::from_utf8_lossy(&self.buffer[(self.position)..(self.position + string_size)])
+                .to_string();
+        self.position += string_size;
+        data
+    }
+
+    fn read_u32(&mut self) -> u32 {
+        let data: [u8; 4] = [
+            self.buffer[self.position],
+            self.buffer[self.position + 1],
+            self.buffer[self.position + 2],
+            self.buffer[self.position + 3],
+        ];
+        self.position += 4;
+        u32::from_be_bytes(data)
+    }
+
+    fn finished_read(&self) -> bool {
+        self.position >= self.buffer.len()
+    }
 }
 
 fn write_string(content: &mut Vec<u8>, value: String) {
@@ -50,50 +72,32 @@ impl ActionMessage {
     }
 
     pub fn parse(buffer: &[u8]) -> ActionMessage {
-        let mut consumer_id_position = 1 as usize;
+        let mut data = Buffer::new(buffer);
 
-        let action = match &buffer[0] {
+        let action = match data.read_u8() {
             1 => {
-                let (topic, topic_size) = read_string(buffer, consumer_id_position);
-                consumer_id_position += topic_size;
-
-                let (partition, partition_size) = read_u32(buffer, consumer_id_position);
-                consumer_id_position += partition_size;
-
-                let (content, content_size) = read_string(buffer, consumer_id_position);
-                consumer_id_position += content_size;
-
+                let topic = data.read_string();
+                let partition = data.read_u32();
+                let content = data.read_string();
                 Action::Produce(topic, partition, content)
             }
             2 => {
-                let (topic, topic_size) = read_string(buffer, consumer_id_position);
-                consumer_id_position += topic_size;
-
-                let (partition, partition_size) = read_u32(buffer, consumer_id_position);
-                consumer_id_position += partition_size;
-
-                let (offset, offset_size) = read_u32(buffer, consumer_id_position);
-                consumer_id_position += offset_size;
-
-                let (limit, limit_size) = read_u32(buffer, consumer_id_position);
-                consumer_id_position += limit_size;
-
+                let topic = data.read_string();
+                let partition = data.read_u32();
+                let offset = data.read_u32();
+                let limit = data.read_u32();
                 Action::Consume(topic, partition, offset, limit)
             }
             3 => {
-                let (topic, topic_size) = read_string(buffer, consumer_id_position);
-                consumer_id_position += topic_size;
-
-                let (partition, partition_size) = read_u32(buffer, consumer_id_position);
-                consumer_id_position += partition_size;
-
+                let topic = data.read_string();
+                let partition = data.read_u32();
                 Action::CreateTopic(topic, partition)
             }
             4 => Action::Quit,
             _ => Action::Invalid,
         };
 
-        let (consumer_id, _) = read_string(buffer, consumer_id_position);
+        let consumer_id = data.read_string();
 
         ActionMessage {
             action,
@@ -157,29 +161,21 @@ impl ResponseMessage {
 
     pub fn parse(buffer: &[u8]) -> Vec<ResponseMessage> {
         let mut result_list = Vec::new();
-        let mut position = 0 as usize;
+        let mut data = Buffer::new(buffer);
         let mut read_all = false;
-        let max_position = buffer.len();
 
         while !read_all {
-            let response = match &buffer[position] {
+            let response = match data.read_u8() {
                 1 => {
-                    position += 1;
-                    let (offset, offset_size) = read_u32(buffer, position);
-                    let (content, content_size) = read_string(buffer, position + offset_size);
-                    position += offset_size + content_size;
+                    let offset = data.read_u32();
+                    let content = data.read_string();
                     Response::Content(offset, content)
                 }
                 2 => {
-                    position += 1;
-                    let (offset, offset_size) = read_u32(buffer, position);
-                    position += offset_size;
+                    let offset = data.read_u32();
                     Response::Offset(offset)
                 }
-                3 => {
-                    position += 1;
-                    Response::Error
-                }
+                3 => Response::Error,
                 _ => {
                     read_all = true;
                     Response::Empty
@@ -187,7 +183,7 @@ impl ResponseMessage {
             };
 
             result_list.push(ResponseMessage { response });
-            read_all = read_all || position >= max_position;
+            read_all = read_all || data.finished_read();
         }
 
         result_list

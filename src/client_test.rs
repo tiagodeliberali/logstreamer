@@ -40,7 +40,11 @@ fn main() {
 
             for i in 0..=2_000_000 {
                 let message = ActionMessage::new(
-                    Action::Produce(String::from("topic"), producer_id, format!("nice message {}", i)),
+                    Action::Produce(
+                        String::from("topic"),
+                        producer_id,
+                        format!("nice message {}", i),
+                    ),
                     String::new(),
                 );
                 let _ = send_message(&mut stream, message);
@@ -74,7 +78,12 @@ fn main() {
                 let response_list = send_message(
                     &mut stream,
                     ActionMessage::new(
-                        Action::Consume(String::from("topic"), consumer_id, current_offset, CONSUMER_LIMIT),
+                        Action::Consume(
+                            String::from("topic"),
+                            consumer_id,
+                            current_offset,
+                            CONSUMER_LIMIT,
+                        ),
                         consumer_name.clone(),
                     ),
                 );
