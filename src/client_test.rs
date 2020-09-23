@@ -1,5 +1,5 @@
 use logstreamer::{Action, ActionMessage, Content, Response, ResponseMessage, TopicAddress};
-use std::io::prelude::*;
+use std::io::prelude::{Read, Write};
 use std::net::TcpStream;
 use std::thread;
 use std::time::Duration;

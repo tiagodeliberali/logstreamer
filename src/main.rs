@@ -1,7 +1,7 @@
 use logstreamer::Cluster;
 use logstreamer::{Action, ActionMessage, Response, ResponseMessage};
 use logstreamer::{Content, TopicAddress};
-use std::io::prelude::*;
+use std::io::prelude::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;

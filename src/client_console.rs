@@ -1,6 +1,6 @@
 use logstreamer::{Action, ActionMessage, Content, Response, ResponseMessage, TopicAddress};
 use std::io;
-use std::io::prelude::*;
+use std::io::prelude::{Read, Write};
 use std::net::TcpStream;
 
 fn to_clean_string(input: &[u8]) -> String {
