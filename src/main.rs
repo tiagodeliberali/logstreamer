@@ -1,5 +1,6 @@
 use logstreamer::Cluster;
 use logstreamer::{Action, ActionMessage, Response, ResponseMessage};
+use logstreamer::{Content, TopicAddress};
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
@@ -40,11 +41,9 @@ fn handle_connection(mut stream: TcpStream, cluster: Arc<Cluster>) {
         let message = ActionMessage::parse(&buffer);
 
         let response_list = match message.action {
-            Action::Produce(topic, partition, content) => {
-                store_data(topic, partition, content, cluster.clone())
-            }
-            Action::Consume(topic, partition, offset, limit) => {
-                read_data(topic, partition, offset, limit, cluster.clone())
+            Action::Produce(topic, content) => store_data(topic, content, cluster.clone()),
+            Action::Consume(topic, offset, limit) => {
+                read_data(topic, offset, limit, cluster.clone())
             }
             Action::CreateTopic(topic, partition_number) => {
                 add_topic(topic, partition_number, cluster.clone())
@@ -68,27 +67,25 @@ fn handle_connection(mut stream: TcpStream, cluster: Arc<Cluster>) {
 }
 
 fn store_data(
-    topic: String,
-    partition: u32,
-    content: String,
+    topic: TopicAddress,
+    content: Content,
     cluster: Arc<Cluster>,
 ) -> Vec<ResponseMessage> {
-    match cluster.add_content(topic, partition, content) {
+    match cluster.add_content(topic, content) {
         Some(offset) => vec![ResponseMessage::new(Response::Offset(offset))],
         None => vec![ResponseMessage::new(Response::Error)],
     }
 }
 
 fn read_data(
-    topic: String,
-    partition: u32,
+    topic: TopicAddress,
     offset: u32,
     limit: u32,
     cluster: Arc<Cluster>,
 ) -> Vec<ResponseMessage> {
     let mut content_list = Vec::new();
 
-    match cluster.get_partition(topic, partition) {
+    match cluster.get_partition(topic) {
         Some(partition) => {
             let locked_partition = partition.queue.lock().unwrap();
 

@@ -1,3 +1,4 @@
+use crate::core::{Content, TopicAddress};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::{Mutex, RwLock};
@@ -21,22 +22,22 @@ impl Cluster {
         self.topics.write().unwrap().insert(topic_name, partitions);
     }
 
-    pub fn get_partition(&self, topic: String, partition: u32) -> Option<Arc<Partition>> {
+    pub fn get_partition(&self, topic: TopicAddress) -> Option<Arc<Partition>> {
         let topics = self.topics.read().unwrap();
-        match topics.get(&topic) {
+        match topics.get(&topic.name) {
             Some(partition_list) => {
-                let partition = partition_list.get(partition as usize).unwrap();
+                let partition = partition_list.get(topic.partition as usize).unwrap();
                 Some(partition.clone())
             }
             None => None,
         }
     }
 
-    pub fn add_content(&self, topic: String, partition: u32, content: String) -> Option<u32> {
+    pub fn add_content(&self, topic: TopicAddress, content: Content) -> Option<u32> {
         let topics = self.topics.read().unwrap();
-        match topics.get(&topic) {
+        match topics.get(&topic.name) {
             Some(partition_list) => {
-                let partition = partition_list.get(partition as usize).unwrap();
+                let partition = partition_list.get(topic.partition as usize).unwrap();
                 let offset = partition.add_content(content);
                 Some(offset as u32)
             }
@@ -46,7 +47,7 @@ impl Cluster {
 }
 
 pub struct Partition {
-    pub queue: Mutex<Vec<String>>,
+    pub queue: Mutex<Vec<Content>>,
 }
 
 impl Partition {
@@ -56,7 +57,7 @@ impl Partition {
         }
     }
 
-    pub fn add_content(&self, content: String) -> u32 {
+    pub fn add_content(&self, content: Content) -> u32 {
         let mut locked_queue = self.queue.lock().unwrap();
         locked_queue.push(content);
         (locked_queue.len() - 1) as u32

@@ -1,4 +1,4 @@
-use logstreamer::{Action, ActionMessage, Response, ResponseMessage};
+use logstreamer::{Action, ActionMessage, Content, Response, ResponseMessage, TopicAddress};
 use std::io::prelude::*;
 use std::net::TcpStream;
 use std::thread;
@@ -41,9 +41,8 @@ fn main() {
             for i in 0..=2_000_000 {
                 let message = ActionMessage::new(
                     Action::Produce(
-                        String::from("topic"),
-                        producer_id,
-                        format!("nice message {}", i),
+                        TopicAddress::new(String::from("topic"), producer_id),
+                        Content::new(format!("nice message {}", i)),
                     ),
                     String::new(),
                 );
@@ -79,8 +78,7 @@ fn main() {
                     &mut stream,
                     ActionMessage::new(
                         Action::Consume(
-                            String::from("topic"),
-                            consumer_id,
+                            TopicAddress::new(String::from("topic"), consumer_id),
                             current_offset,
                             CONSUMER_LIMIT,
                         ),
@@ -94,12 +92,12 @@ fn main() {
                         last_offset = *offset;
                         consumed_messages += 1;
                         if *offset == 1_999_999 {
-                            println!("CONSUMER MESSAGE FOUND {}: {}", consumer_id, content);
+                            println!("CONSUMER MESSAGE FOUND {}: {}", consumer_id, content.value);
                             offset_found = true;
                         } else if i % 400_000 == 0 {
                             println!(
                                 "CONSUMED MESSAGE (total {}) {}: {} WITH VALUE VALUE: {}",
-                                consumed_messages, consumer_id, offset, content
+                                consumed_messages, consumer_id, offset, content.value
                             );
                         }
                     }
