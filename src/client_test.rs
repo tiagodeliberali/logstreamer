@@ -40,17 +40,22 @@ fn main() {
             );
             let _ = send_message(&mut stream, create_topic_message);
 
+            let mut content_list = Vec::new();
             for i in 0..=2_000_000 {
-                let message = ActionMessage::new(
-                    Action::Produce(
-                        TopicAddress::new(String::from("topic"), producer_id),
-                        Content::new(format!("nice message {}", i)),
-                    ),
-                    String::new(),
-                );
-                let _ = send_message(&mut stream, message);
+                if i != 0 && i % 30 == 0 {
+                    let message = ActionMessage::new(
+                        Action::Produce(
+                            TopicAddress::new(String::from("topic"), producer_id),
+                            content_list.clone(),
+                        ),
+                        String::new(),
+                    );
+                    let _ = send_message(&mut stream, message);
+                    content_list.clear();
+                }
+                content_list.push(Content::new(format!("nice message {}", i)));
 
-                if i % 50_000 == 0 {
+                if i % 400_000 == 0 {
                     println!("PRODUCED MESSAGE {}: {}", producer_id, i);
                 }
             }
@@ -75,7 +80,6 @@ fn main() {
             let mut consumed_messages = 0;
 
             while !offset_found {
-                thread::sleep(Duration::from_micros(500));
                 let response_list = send_message(
                     &mut stream,
                     ActionMessage::new(

@@ -33,13 +33,20 @@ impl Cluster {
         }
     }
 
-    pub fn add_content(&self, topic: TopicAddress, content: Content) -> Option<OffsetValue> {
+    pub fn add_content(
+        &self,
+        topic: TopicAddress,
+        content_list: Vec<Content>,
+    ) -> Option<OffsetValue> {
         let topics = self.topics.read().unwrap();
         match topics.get(&topic.name) {
             Some(partition_list) => {
                 let partition = partition_list.get(topic.partition as usize).unwrap();
-                let offset = partition.add_content(content);
-                Some(offset)
+                let mut last_offset = OffsetValue(0);
+                for content in content_list {
+                    last_offset = partition.add_content(content);
+                }
+                Some(last_offset)
             }
             None => None,
         }

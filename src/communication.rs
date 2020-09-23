@@ -53,7 +53,7 @@ fn write_u32(content: &mut Vec<u8>, value: u32) {
 }
 
 pub enum Action {
-    Produce(TopicAddress, Content),
+    Produce(TopicAddress, Vec<Content>),
     Consume(TopicAddress, OffsetValue, u32),
     CreateTopic(String, u32),
     Quit,
@@ -79,8 +79,12 @@ impl ActionMessage {
         let action = match data.read_u8() {
             1 => {
                 let topic = TopicAddress::new(data.read_string(), data.read_u32());
-                let content = Content::new(data.read_string());
-                Action::Produce(topic, content)
+                let content_length = data.read_u32();
+                let mut content_list = Vec::new();
+                for _ in 0..content_length {
+                    content_list.push(Content::new(data.read_string()))
+                }
+                Action::Produce(topic, content_list)
             }
             2 => {
                 let topic = TopicAddress::new(data.read_string(), data.read_u32());
@@ -109,11 +113,14 @@ impl ActionMessage {
         let mut content_vec: Vec<u8> = Vec::new();
 
         match &self.action {
-            Action::Produce(topic, content) => {
+            Action::Produce(topic, content_list) => {
                 content_vec.push(1);
                 write_string(&mut content_vec, topic.name.clone());
                 write_u32(&mut content_vec, topic.partition);
-                write_string(&mut content_vec, content.value.clone());
+                write_u32(&mut content_vec, content_list.len() as u32);
+                for content in content_list {
+                    write_string(&mut content_vec, content.value.clone());
+                }
             }
             Action::Consume(topic, offset, limit) => {
                 content_vec.push(2);
@@ -266,7 +273,7 @@ mod tests {
     fn should_convert_produce_action() {
         let consumer_id = String::from("consumer_id");
         let topic = TopicAddress::new(String::from("topic"), 1);
-        let content = Content::new(String::from("Message Content"));
+        let content = vec![Content::new(String::from("Message Content"))];
 
         let message = ActionMessage::new(Action::Produce(topic, content), consumer_id.clone());
 
@@ -276,7 +283,37 @@ mod tests {
         if let Action::Produce(parsed_topic, content) = message.action {
             assert_eq!(parsed_topic.name, "topic");
             assert_eq!(parsed_topic.partition, 1);
-            assert_eq!(content.value, "Message Content");
+            assert_eq!(content.len(), 1);
+            assert_eq!(content.first().unwrap().value, "Message Content");
+        } else {
+            assert!(false);
+        }
+
+        assert_eq!(message.consumer_id, consumer_id);
+    }
+
+    #[test]
+    fn should_convert_produce_multiple_content_action() {
+        let consumer_id = String::from("consumer_id");
+        let topic = TopicAddress::new(String::from("topic"), 1);
+        let content = vec![
+            Content::new(String::from("Message Content")),
+            Content::new(String::from("Message other")),
+            Content::new(String::from("Message final")),
+        ];
+
+        let message = ActionMessage::new(Action::Produce(topic, content), consumer_id.clone());
+
+        let parsed_message = message.as_vec();
+        let message = ActionMessage::parse(&parsed_message[..]);
+
+        if let Action::Produce(parsed_topic, content) = message.action {
+            assert_eq!(parsed_topic.name, "topic");
+            assert_eq!(parsed_topic.partition, 1);
+            assert_eq!(content.len(), 3);
+            assert_eq!(content.get(0).unwrap().value, "Message Content");
+            assert_eq!(content.get(1).unwrap().value, "Message other");
+            assert_eq!(content.get(2).unwrap().value, "Message final");
         } else {
             assert!(false);
         }
@@ -352,7 +389,7 @@ mod tests {
         let message = ResponseMessage::parse(&parsed_message[..]);
         let message = message.first().unwrap();
 
-        if let Response::Offset(value) = message.response {
+        if let Response::Offset(value) = &message.response {
             assert_eq!(value.0, 100);
         } else {
             assert!(false);

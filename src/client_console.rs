@@ -16,7 +16,7 @@ fn send_message(stream: &mut TcpStream, message: ActionMessage) -> Vec<ResponseM
     stream.write_all(&message.as_vec()[..]).unwrap();
     stream.flush().unwrap();
 
-    let mut buffer = [0; 512];
+    let mut buffer = [0; 1024];
     let _ = match &stream.read(&mut buffer) {
         Ok(value) => value,
         Err(err) => {
@@ -59,7 +59,7 @@ fn main() {
             112 => ActionMessage::new(
                 Action::Produce(
                     TopicAddress::new(String::from("topic"), 0),
-                    Content::new(to_clean_string(&input.as_bytes()[1..])),
+                    vec![Content::new(to_clean_string(&input.as_bytes()[1..]))],
                 ),
                 String::new(),
             ),

@@ -28,7 +28,7 @@ fn main() {
 
 fn handle_connection(mut stream: TcpStream, cluster: Arc<Cluster>) {
     loop {
-        let mut buffer = [0; 512];
+        let mut buffer = [0; 1024];
         let _ = match stream.read(&mut buffer) {
             Ok(value) => value,
             Err(err) => {
@@ -67,7 +67,7 @@ fn handle_connection(mut stream: TcpStream, cluster: Arc<Cluster>) {
 
 fn store_data(
     topic: TopicAddress,
-    content: Content,
+    content: Vec<Content>,
     cluster: Arc<Cluster>,
 ) -> Vec<ResponseMessage> {
     match cluster.add_content(topic, content) {
