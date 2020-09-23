@@ -21,40 +21,44 @@ fn send_message(stream: &mut TcpStream, message: ActionMessage) -> Vec<ResponseM
     ResponseMessage::parse(&buffer)
 }
 
-const NUMBER_OD_CONSUMERS: u32 = 10;
+const NUMBER_OF_PRODUCERS: u32 = 10;
+const NUMBER_OF_CONSUMERS: u32 = 10;
 const CONSUMER_LIMIT: u32 = 30;
 
 fn main() {
-    let producer = thread::spawn(move || {
-        let start = Instant::now();
-        let mut stream = TcpStream::connect("127.0.0.1:8080").unwrap();
+    let mut producers = Vec::new();
+    for producer_id in 0..NUMBER_OF_PRODUCERS {
+        producers.push(thread::spawn(move || {
+            let start = Instant::now();
+            let mut stream = TcpStream::connect("127.0.0.1:8080").unwrap();
 
-        let create_topic_message = ActionMessage::new(
-            Action::CreateTopic(String::from("topic"), 1),
-            String::new(),
-        );
-        let _ = send_message(&mut stream, create_topic_message);
-
-        for i in 0..=2_000_000 {
-            let message = ActionMessage::new(
-                Action::Produce(String::from("topic"), 0, format!("nice message {}", i)),
+            let create_topic_message = ActionMessage::new(
+                Action::CreateTopic(String::from("topic"), NUMBER_OF_PRODUCERS),
                 String::new(),
             );
-            let _ = send_message(&mut stream, message);
+            let _ = send_message(&mut stream, create_topic_message);
 
-            if i % 50_000 == 0 {
-                println!("PRODUCED MESSAGE: {}", i);
+            for i in 0..=2_000_000 {
+                let message = ActionMessage::new(
+                    Action::Produce(String::from("topic"), producer_id, format!("nice message {}", i)),
+                    String::new(),
+                );
+                let _ = send_message(&mut stream, message);
+
+                if i % 50_000 == 0 {
+                    println!("PRODUCED MESSAGE {}: {}", producer_id, i);
+                }
             }
-        }
-        let duration = start.elapsed();
+            let duration = start.elapsed();
 
-        let _ = send_message(&mut stream, ActionMessage::new(Action::Quit, String::new()));
+            let _ = send_message(&mut stream, ActionMessage::new(Action::Quit, String::new()));
 
-        println!("DURATION PRODUCER: {:?}", duration);
-    });
+            println!("DURATION PRODUCER: {:?}", duration);
+        }));
+    }
 
     let mut consumers = Vec::new();
-    for consumer_id in 0..NUMBER_OD_CONSUMERS {
+    for consumer_id in 0..NUMBER_OF_CONSUMERS {
         let consumer = thread::spawn(move || {
             thread::sleep(Duration::from_millis(500u64 / (consumer_id as u64 + 1)));
             let start = Instant::now();
@@ -70,7 +74,7 @@ fn main() {
                 let response_list = send_message(
                     &mut stream,
                     ActionMessage::new(
-                        Action::Consume(String::from("topic"), 0, current_offset, CONSUMER_LIMIT),
+                        Action::Consume(String::from("topic"), consumer_id, current_offset, CONSUMER_LIMIT),
                         consumer_name.clone(),
                     ),
                 );
@@ -113,5 +117,7 @@ fn main() {
     for consumer in consumers {
         consumer.join().unwrap();
     }
-    producer.join().unwrap();
+    for producer in producers {
+        producer.join().unwrap();
+    }
 }
