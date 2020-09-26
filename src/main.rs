@@ -44,8 +44,8 @@ fn handle_connection(mut stream: TcpStream, broker: Arc<Broker>) {
             Action::CreateTopic(topic, partition_number) => {
                 broker.add_topic(topic, partition_number)
             }
-            Action::InitializeController(broker_list) => Vec::new(),
-            Action::InitializeBroker(broker_list) => Vec::new(),
+            Action::InitializeController(_broker_list) => Vec::new(),
+            Action::InitializeBroker(_broker_list) => Vec::new(),
             Action::Quit => return,
             Action::Invalid => vec![ResponseMessage::new_empty()],
         };

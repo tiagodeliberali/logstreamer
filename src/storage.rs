@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::{Mutex, RwLock};
 
+#[derive(Default)]
 pub struct Cluster {
     topics: RwLock<HashMap<String, Vec<Arc<Partition>>>>,
 }
@@ -53,6 +54,7 @@ impl Cluster {
     }
 }
 
+#[derive(Default)]
 pub struct Partition {
     pub queue: Mutex<Vec<Content>>,
 }

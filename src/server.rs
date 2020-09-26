@@ -2,6 +2,7 @@ use crate::communication::{Response, ResponseMessage};
 use crate::core::{Content, OffsetValue, TopicAddress};
 use crate::storage::Cluster;
 
+#[derive(Default)]
 pub struct Broker {
     cluster: Cluster,
 }
