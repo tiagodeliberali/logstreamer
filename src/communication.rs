@@ -1,4 +1,4 @@
-use crate::core::{Content, OffsetValue, TopicAddress};
+use crate::core::{BrokerInfo, Content, OffsetValue, TopicAddress};
 
 struct Buffer<'a> {
     position: usize,
@@ -56,6 +56,8 @@ pub enum Action {
     Produce(TopicAddress, Vec<Content>),
     Consume(TopicAddress, OffsetValue, u32),
     CreateTopic(String, u32),
+    InitializeController(Vec<String>),
+    InitializeBroker(Vec<BrokerInfo>),
     Quit,
     Invalid,
 }
@@ -97,7 +99,25 @@ impl ActionMessage {
                 let partition = data.read_u32();
                 Action::CreateTopic(topic, partition)
             }
-            4 => Action::Quit,
+            4 => {
+                let mut broker_list = Vec::new();
+                let size = data.read_u32() as usize;
+                for _ in 0..size {
+                    broker_list.push(data.read_string());
+                }
+                Action::InitializeController(broker_list)
+            }
+            5 => {
+                let mut broker_list = Vec::new();
+                let size = data.read_u32() as usize;
+                for _ in 0..size {
+                    let id = data.read_u32();
+                    let broker = data.read_string();
+                    broker_list.push(BrokerInfo(id, broker));
+                }
+                Action::InitializeBroker(broker_list)
+            }
+            99 => Action::Quit,
             _ => Action::Invalid,
         };
 
@@ -134,7 +154,22 @@ impl ActionMessage {
                 write_string(&mut content_vec, topic.clone());
                 write_u32(&mut content_vec, *partition);
             }
-            Action::Quit => content_vec.push(4),
+            Action::InitializeController(broker_list) => {
+                content_vec.push(4);
+                write_u32(&mut content_vec, broker_list.len() as u32);
+                for broker in broker_list {
+                    write_string(&mut content_vec, broker.into());
+                }
+            }
+            Action::InitializeBroker(broker_list) => {
+                content_vec.push(5);
+                write_u32(&mut content_vec, broker_list.len() as u32);
+                for broker in broker_list {
+                    write_u32(&mut content_vec, broker.0.clone());
+                    write_string(&mut content_vec, broker.1.clone());
+                }
+            }
+            Action::Quit => content_vec.push(99),
             Action::Invalid => content_vec.push(0),
         }
 
@@ -340,6 +375,54 @@ mod tests {
         }
 
         assert_eq!(message.consumer_id, consumer_id);
+    }
+
+    #[test]
+    fn shoyd_convert_initialize_controller_action() {
+        let broker_list = vec![String::from("broker1"), String::from("broker2")];
+
+        let message = ActionMessage::new(
+            Action::InitializeController(broker_list),
+            String::from("consumer_id"),
+        );
+
+        let parsed_message = message.as_vec();
+        let message = ActionMessage::parse(&parsed_message[..]);
+
+        if let Action::InitializeController(list) = message.action {
+            assert_eq!(2, list.len());
+            assert_eq!(list.get(0).unwrap(), "broker1");
+            assert_eq!(list.get(1).unwrap(), "broker2");
+        } else {
+            assert!(false);
+        }
+    }
+
+    #[test]
+    fn shoyd_convert_initialize_broker_action() {
+        let broker_list = vec![
+            BrokerInfo(1, String::from("broker1")),
+            BrokerInfo(2, String::from("broker2")),
+        ];
+
+        let message = ActionMessage::new(
+            Action::InitializeBroker(broker_list),
+            String::from("consumer_id"),
+        );
+
+        let parsed_message = message.as_vec();
+        let message = ActionMessage::parse(&parsed_message[..]);
+
+        if let Action::InitializeBroker(list) = message.action {
+            assert_eq!(2, list.len());
+            assert_eq!(list.get(0).unwrap().0, 1);
+            assert_eq!(list.get(0).unwrap().1, "broker1");
+
+            assert_eq!(list.get(1).unwrap().0, 2);
+            assert_eq!(list.get(1).unwrap().1, "broker2");
+        } else {
+            assert!(false);
+        }
     }
 
     #[test]
