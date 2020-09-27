@@ -3,9 +3,9 @@ use crate::core::{Content, OffsetValue, TopicAddress};
 use crate::storage::Cluster;
 use std::io::prelude::{Read, Write};
 use std::net::TcpStream;
+use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
-use std::sync::Mutex;
 
 pub struct Client {
     stream: TcpStream,
@@ -71,25 +71,30 @@ impl FailureDetector {
             let mut client = Client::new(broker.clone());
             client.send_message(ActionMessage::new(Action::IamAlive(self.id), String::new()));
             client.send_message(ActionMessage::new(Action::Quit, String::new()));
+            println!("[sent {}] I am Alive to {}", self.id, broker.clone());
         }
     }
 
     fn check_received_message(&mut self) {
         if self.received {
             self.received = false;
+            println!("[validation {}] Message received from {}", self.id, self.trusted);
         } else {
             self.trusted += 1;
+            println!("[validation {}] Message NOT received from {}. Updating trusted to {}", self.id, self.trusted - 1, self.trusted);
         }
     }
 
     pub fn receive_signal(&mut self, id: u32) {
         if id == self.trusted {
             self.received = true;
+            println!("[received {}] I am Alive from trusted {}", self.id, id);
         } else if id < self.trusted {
             let duration = self.durations.get_mut(id as usize).unwrap();
             *duration = Duration::from_secs(duration.as_secs() + 5);
             self.trusted = id;
             self.received = true;
+            println!("[received {}] I am Alive from PREVIOUS trusted {}", self.id, id);
         }
     }
 }
@@ -110,9 +115,29 @@ impl Broker {
         }
     }
 
+    pub fn init_controller(&self, brokers: Vec<String>) {
+        for (id, broker) in brokers.iter().enumerate() {
+            let mut client = Client::new(broker.clone());
+            client.send_message(ActionMessage::new(
+                Action::InitializeBroker(id as u32, brokers.clone()),
+                String::new(),
+            ));
+            client.send_message(ActionMessage::new(Action::Quit, String::new()));
+        }
+
+        let failure_detector = FailureDetector::new(0, brokers);
+        self.failure_detector
+            .lock()
+            .unwrap()
+            .replace(failure_detector);
+    }
+
     pub fn init_broker(&self, id: u32, brokers: Vec<String>) {
         let failure_detector = FailureDetector::new(id, brokers);
-        self.failure_detector.lock().unwrap().replace(failure_detector);
+        self.failure_detector
+            .lock()
+            .unwrap()
+            .replace(failure_detector);
     }
 
     pub fn receive_signal(&self, id: u32) {

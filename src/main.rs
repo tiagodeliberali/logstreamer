@@ -12,6 +12,11 @@ fn main() {
         Err(err) => panic!("Failed to bind address\r\n{}", err),
     };
 
+    let cloned_broker = broker.clone();
+    thread::spawn(move || {
+        cloned_broker.loop_failure_detector();
+    });
+
     for stream in listener.incoming() {
         let cloned_broker = broker.clone();
         match stream {
@@ -44,10 +49,26 @@ fn handle_connection(mut stream: TcpStream, broker: Arc<Broker>) {
             Action::CreateTopic(topic, partition_number) => {
                 broker.add_topic(topic, partition_number)
             }
-            Action::InitializeController(_broker_list) => Vec::new(),
-            Action::InitializeBroker(_broker_list) => Vec::new(),
-            Action::Quit => return,
-            Action::Invalid => vec![ResponseMessage::new_empty()],
+            Action::InitializeController(brokers) => {
+                broker.init_controller(brokers);
+                Vec::new()
+            }
+            Action::InitializeBroker(id, brokers) => {
+                broker.init_broker(id, brokers);
+                Vec::new()
+            }
+            Action::IamAlive(id) => {
+                broker.receive_signal(id);
+                Vec::new()
+            }
+            Action::Invalid => Vec::new(),
+            Action::Quit => {
+                stream
+                    .write_all(&ResponseMessage::new_empty().as_vec()[..])
+                    .unwrap();
+                stream.flush().unwrap();
+                return;
+            }
         };
 
         let mut response_content: Vec<u8> = Vec::new();

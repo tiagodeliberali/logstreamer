@@ -21,5 +21,3 @@ impl Content {
         Content { value }
     }
 }
-
-pub struct BrokerInfo(pub u32, pub String);

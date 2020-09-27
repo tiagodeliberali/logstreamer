@@ -1,4 +1,4 @@
-use crate::core::{BrokerInfo, Content, OffsetValue, TopicAddress};
+use crate::core::{Content, OffsetValue, TopicAddress};
 
 struct Buffer<'a> {
     position: usize,
@@ -57,7 +57,8 @@ pub enum Action {
     Consume(TopicAddress, OffsetValue, u32),
     CreateTopic(String, u32),
     InitializeController(Vec<String>),
-    InitializeBroker(Vec<BrokerInfo>),
+    InitializeBroker(u32, Vec<String>),
+    IamAlive(u32),
     Quit,
     Invalid,
 }
@@ -109,13 +110,17 @@ impl ActionMessage {
             }
             5 => {
                 let mut broker_list = Vec::new();
+                let broker_id = data.read_u32();
                 let size = data.read_u32() as usize;
                 for _ in 0..size {
-                    let id = data.read_u32();
                     let broker = data.read_string();
-                    broker_list.push(BrokerInfo(id, broker));
+                    broker_list.push(broker);
                 }
-                Action::InitializeBroker(broker_list)
+                Action::InitializeBroker(broker_id, broker_list)
+            }
+            6 => {
+                let id = data.read_u32();
+                Action::IamAlive(id)
             }
             99 => Action::Quit,
             _ => Action::Invalid,
@@ -161,13 +166,17 @@ impl ActionMessage {
                     write_string(&mut content_vec, broker.into());
                 }
             }
-            Action::InitializeBroker(broker_list) => {
+            Action::InitializeBroker(broker_id, broker_list) => {
                 content_vec.push(5);
+                write_u32(&mut content_vec, *broker_id);
                 write_u32(&mut content_vec, broker_list.len() as u32);
                 for broker in broker_list {
-                    write_u32(&mut content_vec, broker.0.clone());
-                    write_string(&mut content_vec, broker.1.clone());
+                    write_string(&mut content_vec, broker.clone());
                 }
+            }
+            Action::IamAlive(id) => {
+                content_vec.push(6);
+                write_u32(&mut content_vec, *id);
             }
             Action::Quit => content_vec.push(99),
             Action::Invalid => content_vec.push(0),
@@ -399,6 +408,20 @@ mod tests {
     }
 
     #[test]
+    fn shoyd_convert_iamalive_action() {
+        let message = ActionMessage::new(Action::IamAlive(10), String::from("consumer_id"));
+
+        let parsed_message = message.as_vec();
+        let message = ActionMessage::parse(&parsed_message[..]);
+
+        if let Action::IamAlive(id) = message.action {
+            assert_eq!(id, 10);
+        } else {
+            assert!(false);
+        }
+    }
+
+    #[test]
     fn shoyd_convert_initialize_broker_action() {
         let broker_list = vec![
             BrokerInfo(1, String::from("broker1")),
@@ -406,20 +429,18 @@ mod tests {
         ];
 
         let message = ActionMessage::new(
-            Action::InitializeBroker(broker_list),
+            Action::InitializeBroker(5, broker_list),
             String::from("consumer_id"),
         );
 
         let parsed_message = message.as_vec();
         let message = ActionMessage::parse(&parsed_message[..]);
 
-        if let Action::InitializeBroker(list) = message.action {
+        if let Action::InitializeBroker(id, list) = message.action {
+            assert_eq!(5, id);
             assert_eq!(2, list.len());
-            assert_eq!(list.get(0).unwrap().0, 1);
-            assert_eq!(list.get(0).unwrap().1, "broker1");
-
-            assert_eq!(list.get(1).unwrap().0, 2);
-            assert_eq!(list.get(1).unwrap().1, "broker2");
+            assert_eq!(list.get(0).unwrap(), "broker1");
+            assert_eq!(list.get(1).unwrap(), "broker2");
         } else {
             assert!(false);
         }
