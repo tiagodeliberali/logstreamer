@@ -45,7 +45,7 @@ struct FailureDetector {
 
 impl FailureDetector {
     pub fn new(id: u32, brokers: Vec<String>) -> FailureDetector {
-        let durations = vec![Duration::from_secs(10); brokers.len()];
+        let durations = vec![Duration::from_secs(3); brokers.len()];
 
         println!("[initialized {}] starting...", id);
         FailureDetector {
@@ -96,7 +96,6 @@ impl FailureDetector {
     }
 
     pub fn receive_signal(&mut self, id: u32) {
-        println!("[received {}] I am Alive from {}", self.id, id);
         if id == self.trusted {
             self.received = true;
             println!("[received {}] I am Alive from TRUSTED {}", self.id, id);
@@ -109,6 +108,8 @@ impl FailureDetector {
                 "[received {}] I am Alive from PREVIOUS TRUSTED {}",
                 self.id, id
             );
+        } else {
+            println!("[received {}] I am Alive from SOMETHING WRONG {}", self.id, id);
         }
     }
 }

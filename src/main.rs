@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::thread;
 
 fn main() {
-    let mut broker_address = String::from("127.0.0.1:8081");
+    let mut broker_address = String::from("127.0.0.1:8080");
 
     let args: Vec<String> = env::args().collect();
     if args.len() > 1 {
