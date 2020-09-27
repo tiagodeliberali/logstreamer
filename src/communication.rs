@@ -43,7 +43,7 @@ impl<'a> Buffer<'a> {
     }
 }
 
-fn write_string(content: &mut Vec<u8>, value: String) {
+fn write_string(content: &mut Vec<u8>, value: &String) {
     write_u32(content, value.len() as u32);
     content.extend_from_slice(value.as_bytes());
 }
@@ -140,30 +140,30 @@ impl ActionMessage {
         match &self.action {
             Action::Produce(topic, content_list) => {
                 content_vec.push(1);
-                write_string(&mut content_vec, topic.name.clone());
+                write_string(&mut content_vec, &topic.name);
                 write_u32(&mut content_vec, topic.partition);
                 write_u32(&mut content_vec, content_list.len() as u32);
                 for content in content_list {
-                    write_string(&mut content_vec, content.value.clone());
+                    write_string(&mut content_vec, &content.value);
                 }
             }
             Action::Consume(topic, offset, limit) => {
                 content_vec.push(2);
-                write_string(&mut content_vec, topic.name.clone());
+                write_string(&mut content_vec, &topic.name);
                 write_u32(&mut content_vec, topic.partition);
                 write_u32(&mut content_vec, offset.0);
                 write_u32(&mut content_vec, *limit);
             }
             Action::CreateTopic(topic, partition) => {
                 content_vec.push(3);
-                write_string(&mut content_vec, topic.clone());
+                write_string(&mut content_vec, &topic);
                 write_u32(&mut content_vec, *partition);
             }
             Action::InitializeController(broker_list) => {
                 content_vec.push(4);
                 write_u32(&mut content_vec, broker_list.len() as u32);
                 for broker in broker_list {
-                    write_string(&mut content_vec, broker.into());
+                    write_string(&mut content_vec, broker);
                 }
             }
             Action::InitializeBroker(broker_id, broker_list) => {
@@ -171,7 +171,7 @@ impl ActionMessage {
                 write_u32(&mut content_vec, *broker_id);
                 write_u32(&mut content_vec, broker_list.len() as u32);
                 for broker in broker_list {
-                    write_string(&mut content_vec, broker.clone());
+                    write_string(&mut content_vec, broker);
                 }
             }
             Action::IamAlive(id) => {
@@ -182,7 +182,7 @@ impl ActionMessage {
             Action::Invalid => content_vec.push(0),
         }
 
-        write_string(&mut content_vec, self.consumer_id.clone());
+        write_string(&mut content_vec, &self.consumer_id);
 
         content_vec
     }
@@ -248,7 +248,7 @@ impl ResponseMessage {
             Response::Content(offset, content) => {
                 content_vec.push(1);
                 write_u32(&mut content_vec, offset.0);
-                write_string(&mut content_vec, content.value.clone());
+                write_string(&mut content_vec, &content.value);
             }
             Response::Offset(offset) => {
                 content_vec.push(2);
@@ -424,8 +424,8 @@ mod tests {
     #[test]
     fn shoyd_convert_initialize_broker_action() {
         let broker_list = vec![
-            BrokerInfo(1, String::from("broker1")),
-            BrokerInfo(2, String::from("broker2")),
+            String::from("broker1"),
+            String::from("broker2"),
         ];
 
         let message = ActionMessage::new(
