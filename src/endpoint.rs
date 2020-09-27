@@ -45,56 +45,70 @@ struct FailureDetector {
 
 impl FailureDetector {
     pub fn new(id: u32, brokers: Vec<String>) -> FailureDetector {
-        let durations = vec![Duration::from_secs(5); brokers.len()];
+        let durations = vec![Duration::from_secs(10); brokers.len()];
 
+        println!("[initialized {}] starting...", id);
         FailureDetector {
             id,
             trusted: 0,
             received: true,
-            brokers: Vec::new(),
+            brokers,
             durations,
         }
     }
 
-    pub fn run_loop(&mut self) {
+    pub fn run_loop(&mut self) -> Duration {
         if self.trusted == self.id {
-            thread::sleep(Duration::from_secs(5));
             self.send_messages();
+            return Duration::from_secs(1);
         } else if self.trusted < self.id {
-            thread::sleep(*self.durations.get(self.trusted as usize).unwrap());
             self.check_received_message();
+            return *self.durations.get(self.trusted as usize).unwrap();
         }
+        Duration::from_secs(10)
     }
 
-    fn send_messages(&mut self) {
+    fn send_messages(&self) {
         for broker in self.brokers[(self.id as usize + 1)..].iter() {
             let mut client = Client::new(broker.clone());
             client.send_message(ActionMessage::new(Action::IamAlive(self.id), String::new()));
             client.send_message(ActionMessage::new(Action::Quit, String::new()));
-            println!("[sent {}] I am Alive to {}", self.id, broker.clone());
+            println!("[sent {}] I am Alive to {}", self.id, &broker);
         }
     }
 
     fn check_received_message(&mut self) {
         if self.received {
             self.received = false;
-            println!("[validation {}] Message received from {}", self.id, self.trusted);
+            println!(
+                "[validation {}] Message received from {}",
+                self.id, self.trusted
+            );
         } else {
             self.trusted += 1;
-            println!("[validation {}] Message NOT received from {}. Updating trusted to {}", self.id, self.trusted - 1, self.trusted);
+            println!(
+                "[validation {}] Message NOT received from {}. Updating trusted to {}",
+                self.id,
+                self.trusted - 1,
+                self.trusted
+            );
         }
     }
 
     pub fn receive_signal(&mut self, id: u32) {
+        println!("[received {}] I am Alive from {}", self.id, id);
         if id == self.trusted {
             self.received = true;
-            println!("[received {}] I am Alive from trusted {}", self.id, id);
+            println!("[received {}] I am Alive from TRUSTED {}", self.id, id);
         } else if id < self.trusted {
             let duration = self.durations.get_mut(id as usize).unwrap();
-            *duration = Duration::from_secs(duration.as_secs() + 5);
+            *duration = Duration::from_secs(duration.as_secs() + 1);
             self.trusted = id;
             self.received = true;
-            println!("[received {}] I am Alive from PREVIOUS trusted {}", self.id, id);
+            println!(
+                "[received {}] I am Alive from PREVIOUS TRUSTED {}",
+                self.id, id
+            );
         }
     }
 }
@@ -116,10 +130,10 @@ impl Broker {
     }
 
     pub fn init_controller(&self, brokers: Vec<String>) {
-        for (id, broker) in brokers.iter().enumerate() {
+        for (id, broker) in brokers[1..].iter().enumerate() {
             let mut client = Client::new(broker.clone());
             client.send_message(ActionMessage::new(
-                Action::InitializeBroker(id as u32, brokers.clone()),
+                Action::InitializeBroker(id as u32 + 1, brokers.clone()),
                 String::new(),
             ));
             client.send_message(ActionMessage::new(Action::Quit, String::new()));
@@ -149,11 +163,18 @@ impl Broker {
     }
 
     pub fn loop_failure_detector(&self) {
-        let mut locked_failure_detector = self.failure_detector.lock().unwrap();
-        let optional_failure_detector = locked_failure_detector.as_mut();
-        if let Some(failure_detector) = optional_failure_detector {
-            failure_detector.run_loop();
+        let mut duration = Duration::from_secs(2);
+        {
+            let mut locked_failure_detector = self.failure_detector.lock().unwrap();
+            let optional_failure_detector = locked_failure_detector.as_mut();
+            if let Some(failure_detector) = optional_failure_detector {
+                duration = failure_detector.run_loop();
+            } else {
+                println!("[loop] Failure detector not instantiated");
+            }
         }
+
+        thread::sleep(duration);
     }
 
     pub fn store_data(&self, topic: TopicAddress, content: Vec<Content>) -> Vec<ResponseMessage> {

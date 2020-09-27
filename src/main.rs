@@ -1,19 +1,28 @@
 use logstreamer::{Action, ActionMessage, Broker, ResponseMessage};
+use std::env;
 use std::io::prelude::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
 
 fn main() {
+    let mut broker_address = String::from("127.0.0.1:8081");
+
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 {
+        broker_address = args.get(1).unwrap().clone();
+    }
+
     let broker = Arc::new(Broker::new());
 
-    let listener = match TcpListener::bind("127.0.0.1:8080") {
+    let listener = match TcpListener::bind(&broker_address) {
         Ok(listener) => listener,
         Err(err) => panic!("Failed to bind address\r\n{}", err),
     };
+    println!("Started server at {}", &broker_address);
 
     let cloned_broker = broker.clone();
-    thread::spawn(move || {
+    thread::spawn(move || loop {
         cloned_broker.loop_failure_detector();
     });
 

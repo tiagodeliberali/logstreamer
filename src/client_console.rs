@@ -20,6 +20,15 @@ fn main() {
         let action = input.as_bytes()[0];
 
         let message = match action {
+            // i
+            105 => ActionMessage::new(
+                Action::InitializeController(vec![
+                    String::from("127.0.0.1:8080"),
+                    String::from("127.0.0.1:8081"),
+                    String::from("127.0.0.1:8082"),
+                ]),
+                String::new(),
+            ),
             // c - consume
             99 => ActionMessage::new(
                 Action::Consume(

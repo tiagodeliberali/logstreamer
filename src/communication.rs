@@ -423,10 +423,7 @@ mod tests {
 
     #[test]
     fn shoyd_convert_initialize_broker_action() {
-        let broker_list = vec![
-            String::from("broker1"),
-            String::from("broker2"),
-        ];
+        let broker_list = vec![String::from("broker1"), String::from("broker2")];
 
         let message = ActionMessage::new(
             Action::InitializeBroker(5, broker_list),
