@@ -57,6 +57,14 @@ impl FailureDetector {
         }
     }
 
+    pub fn is_leader(&self) -> bool {
+        self.id == self.trusted
+    }
+
+    pub fn get_lead_address(&self) -> String {
+        self.brokers.get(self.trusted as usize).unwrap().clone()
+    }
+
     pub fn run_loop(&mut self) -> Duration {
         if self.trusted == self.id {
             self.send_messages();
@@ -109,7 +117,10 @@ impl FailureDetector {
                 self.id, id
             );
         } else {
-            println!("[received {}] I am Alive from SOMETHING WRONG {}", self.id, id);
+            println!(
+                "[received {}] I am Alive from SOMETHING WRONG {}",
+                self.id, id
+            );
         }
     }
 }
@@ -130,7 +141,7 @@ impl Broker {
         }
     }
 
-    pub fn init_controller(&self, brokers: Vec<String>) {
+    pub fn init_controller(&self, brokers: Vec<String>) -> Vec<ResponseMessage> {
         for (id, broker) in brokers[1..].iter().enumerate() {
             let mut client = Client::new(broker.clone());
             client.send_message(ActionMessage::new(
@@ -145,22 +156,25 @@ impl Broker {
             .lock()
             .unwrap()
             .replace(failure_detector);
+        vec![]
     }
 
-    pub fn init_broker(&self, id: u32, brokers: Vec<String>) {
+    pub fn init_broker(&self, id: u32, brokers: Vec<String>) -> Vec<ResponseMessage> {
         let failure_detector = FailureDetector::new(id, brokers);
         self.failure_detector
             .lock()
             .unwrap()
             .replace(failure_detector);
+        vec![]
     }
 
-    pub fn receive_signal(&self, id: u32) {
+    pub fn receive_signal(&self, id: u32) -> Vec<ResponseMessage> {
         let mut locked_failure_detector = self.failure_detector.lock().unwrap();
         let optional_failure_detector = locked_failure_detector.as_mut();
         if let Some(failure_detector) = optional_failure_detector {
             failure_detector.receive_signal(id);
         }
+        vec![]
     }
 
     pub fn loop_failure_detector(&self) {
@@ -219,8 +233,26 @@ impl Broker {
     }
 
     pub fn add_topic(&self, topic: String, partition_number: u32) -> Vec<ResponseMessage> {
-        self.cluster.add_topic(topic, partition_number as usize);
-        vec![]
+        if self
+            .failure_detector
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .is_leader()
+        {
+            self.cluster.add_topic(topic, partition_number as usize);
+            vec![]
+        } else {
+            vec![ResponseMessage::new(Response::AskTheController(
+                self.failure_detector
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .get_lead_address(),
+            ))]
+        }
     }
 }
 

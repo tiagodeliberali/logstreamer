@@ -192,6 +192,7 @@ pub enum Response {
     Empty,
     Offset(OffsetValue),
     Content(OffsetValue, Content),
+    AskTheController(String),
     Error,
 }
 
@@ -227,6 +228,10 @@ impl ResponseMessage {
                     Response::Offset(offset)
                 }
                 3 => Response::Error,
+                4 => {
+                    let broker = data.read_string();
+                    Response::AskTheController(broker)
+                }
                 _ => {
                     read_all = true;
                     Response::Empty
@@ -255,6 +260,10 @@ impl ResponseMessage {
                 write_u32(&mut content_vec, offset.0);
             }
             Response::Error => content_vec.push(3),
+            Response::AskTheController(broker_id) => {
+                content_vec.push(4);
+                write_string(&mut content_vec, &broker_id);
+            }
         }
 
         content_vec
@@ -492,6 +501,22 @@ mod tests {
 
         if let Response::Offset(value) = &message.response {
             assert_eq!(value.0, 100);
+        } else {
+            assert!(false);
+        }
+    }
+
+    #[test]
+    fn should_convert_askthecontrolller_response() {
+        let message =
+            ResponseMessage::new(Response::AskTheController(String::from("localhost:8080")));
+
+        let parsed_message = message.as_vec();
+        let message = ResponseMessage::parse(&parsed_message[..]);
+        let message = message.first().unwrap();
+
+        if let Response::AskTheController(value) = &message.response {
+            assert_eq!(value, "localhost:8080");
         } else {
             assert!(false);
         }

@@ -58,18 +58,9 @@ fn handle_connection(mut stream: TcpStream, broker: Arc<Broker>) {
             Action::CreateTopic(topic, partition_number) => {
                 broker.add_topic(topic, partition_number)
             }
-            Action::InitializeController(brokers) => {
-                broker.init_controller(brokers);
-                Vec::new()
-            }
-            Action::InitializeBroker(id, brokers) => {
-                broker.init_broker(id, brokers);
-                Vec::new()
-            }
-            Action::IamAlive(id) => {
-                broker.receive_signal(id);
-                Vec::new()
-            }
+            Action::InitializeController(brokers) => broker.init_controller(brokers),
+            Action::InitializeBroker(id, brokers) => broker.init_broker(id, brokers),
+            Action::IamAlive(id) => broker.receive_signal(id),
             Action::Invalid => Vec::new(),
             Action::Quit => {
                 stream

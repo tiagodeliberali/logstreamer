@@ -1,5 +1,6 @@
 use logstreamer::{Action, ActionMessage, Client, Content, OffsetValue, Response, TopicAddress};
 use std::io;
+use std::env;
 
 fn to_clean_string(input: &[u8]) -> String {
     String::from_utf8_lossy(&input)
@@ -10,7 +11,14 @@ fn to_clean_string(input: &[u8]) -> String {
 
 fn main() {
     let mut exit = false;
-    let mut client = Client::new(String::from("127.0.0.1:8080"));
+    let mut broker_address = String::from("127.0.0.1:8080");
+
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 {
+        broker_address = args.get(1).unwrap().clone();
+    }
+
+    let mut client = Client::new(broker_address);
 
     println!("logstreamer client");
     while !exit {
@@ -71,6 +79,7 @@ fn main() {
                     println!("[content: {}] {}", offset.0, value.value)
                 }
                 Response::Offset(value) => println!("[offset] {}", value.0),
+                Response::AskTheController(broker) => println!("[ask controller] {}", broker),
                 Response::Error => println!("[error]"),
             }
         }
