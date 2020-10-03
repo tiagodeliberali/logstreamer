@@ -11,7 +11,7 @@ impl TopicAddress {
     }
 }
 
-#[derive(Clone)]
+#[derive(Default, Clone)]
 pub struct Content {
     pub value: String,
 }

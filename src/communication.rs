@@ -43,7 +43,7 @@ impl<'a> Buffer<'a> {
     }
 }
 
-fn write_string(content: &mut Vec<u8>, value: String) {
+fn write_string(content: &mut Vec<u8>, value: &String) {
     write_u32(content, value.len() as u32);
     content.extend_from_slice(value.as_bytes());
 }
@@ -56,6 +56,9 @@ pub enum Action {
     Produce(TopicAddress, Vec<Content>),
     Consume(TopicAddress, OffsetValue, u32),
     CreateTopic(String, u32),
+    InitializeController(Vec<String>),
+    InitializeBroker(u32, Vec<String>),
+    IamAlive(u32),
     Quit,
     Invalid,
 }
@@ -97,7 +100,29 @@ impl ActionMessage {
                 let partition = data.read_u32();
                 Action::CreateTopic(topic, partition)
             }
-            4 => Action::Quit,
+            4 => {
+                let mut broker_list = Vec::new();
+                let size = data.read_u32() as usize;
+                for _ in 0..size {
+                    broker_list.push(data.read_string());
+                }
+                Action::InitializeController(broker_list)
+            }
+            5 => {
+                let mut broker_list = Vec::new();
+                let broker_id = data.read_u32();
+                let size = data.read_u32() as usize;
+                for _ in 0..size {
+                    let broker = data.read_string();
+                    broker_list.push(broker);
+                }
+                Action::InitializeBroker(broker_id, broker_list)
+            }
+            6 => {
+                let id = data.read_u32();
+                Action::IamAlive(id)
+            }
+            99 => Action::Quit,
             _ => Action::Invalid,
         };
 
@@ -115,30 +140,49 @@ impl ActionMessage {
         match &self.action {
             Action::Produce(topic, content_list) => {
                 content_vec.push(1);
-                write_string(&mut content_vec, topic.name.clone());
+                write_string(&mut content_vec, &topic.name);
                 write_u32(&mut content_vec, topic.partition);
                 write_u32(&mut content_vec, content_list.len() as u32);
                 for content in content_list {
-                    write_string(&mut content_vec, content.value.clone());
+                    write_string(&mut content_vec, &content.value);
                 }
             }
             Action::Consume(topic, offset, limit) => {
                 content_vec.push(2);
-                write_string(&mut content_vec, topic.name.clone());
+                write_string(&mut content_vec, &topic.name);
                 write_u32(&mut content_vec, topic.partition);
                 write_u32(&mut content_vec, offset.0);
                 write_u32(&mut content_vec, *limit);
             }
             Action::CreateTopic(topic, partition) => {
                 content_vec.push(3);
-                write_string(&mut content_vec, topic.clone());
+                write_string(&mut content_vec, &topic);
                 write_u32(&mut content_vec, *partition);
             }
-            Action::Quit => content_vec.push(4),
+            Action::InitializeController(broker_list) => {
+                content_vec.push(4);
+                write_u32(&mut content_vec, broker_list.len() as u32);
+                for broker in broker_list {
+                    write_string(&mut content_vec, broker);
+                }
+            }
+            Action::InitializeBroker(broker_id, broker_list) => {
+                content_vec.push(5);
+                write_u32(&mut content_vec, *broker_id);
+                write_u32(&mut content_vec, broker_list.len() as u32);
+                for broker in broker_list {
+                    write_string(&mut content_vec, broker);
+                }
+            }
+            Action::IamAlive(id) => {
+                content_vec.push(6);
+                write_u32(&mut content_vec, *id);
+            }
+            Action::Quit => content_vec.push(99),
             Action::Invalid => content_vec.push(0),
         }
 
-        write_string(&mut content_vec, self.consumer_id.clone());
+        write_string(&mut content_vec, &self.consumer_id);
 
         content_vec
     }
@@ -148,6 +192,7 @@ pub enum Response {
     Empty,
     Offset(OffsetValue),
     Content(OffsetValue, Content),
+    AskTheController(String),
     Error,
 }
 
@@ -183,6 +228,10 @@ impl ResponseMessage {
                     Response::Offset(offset)
                 }
                 3 => Response::Error,
+                4 => {
+                    let broker = data.read_string();
+                    Response::AskTheController(broker)
+                }
                 _ => {
                     read_all = true;
                     Response::Empty
@@ -204,13 +253,17 @@ impl ResponseMessage {
             Response::Content(offset, content) => {
                 content_vec.push(1);
                 write_u32(&mut content_vec, offset.0);
-                write_string(&mut content_vec, content.value.clone());
+                write_string(&mut content_vec, &content.value);
             }
             Response::Offset(offset) => {
                 content_vec.push(2);
                 write_u32(&mut content_vec, offset.0);
             }
             Response::Error => content_vec.push(3),
+            Response::AskTheController(broker_id) => {
+                content_vec.push(4);
+                write_string(&mut content_vec, &broker_id);
+            }
         }
 
         content_vec
@@ -343,6 +396,63 @@ mod tests {
     }
 
     #[test]
+    fn shoyd_convert_initialize_controller_action() {
+        let broker_list = vec![String::from("broker1"), String::from("broker2")];
+
+        let message = ActionMessage::new(
+            Action::InitializeController(broker_list),
+            String::from("consumer_id"),
+        );
+
+        let parsed_message = message.as_vec();
+        let message = ActionMessage::parse(&parsed_message[..]);
+
+        if let Action::InitializeController(list) = message.action {
+            assert_eq!(2, list.len());
+            assert_eq!(list.get(0).unwrap(), "broker1");
+            assert_eq!(list.get(1).unwrap(), "broker2");
+        } else {
+            assert!(false);
+        }
+    }
+
+    #[test]
+    fn shoyd_convert_iamalive_action() {
+        let message = ActionMessage::new(Action::IamAlive(10), String::from("consumer_id"));
+
+        let parsed_message = message.as_vec();
+        let message = ActionMessage::parse(&parsed_message[..]);
+
+        if let Action::IamAlive(id) = message.action {
+            assert_eq!(id, 10);
+        } else {
+            assert!(false);
+        }
+    }
+
+    #[test]
+    fn shoyd_convert_initialize_broker_action() {
+        let broker_list = vec![String::from("broker1"), String::from("broker2")];
+
+        let message = ActionMessage::new(
+            Action::InitializeBroker(5, broker_list),
+            String::from("consumer_id"),
+        );
+
+        let parsed_message = message.as_vec();
+        let message = ActionMessage::parse(&parsed_message[..]);
+
+        if let Action::InitializeBroker(id, list) = message.action {
+            assert_eq!(5, id);
+            assert_eq!(2, list.len());
+            assert_eq!(list.get(0).unwrap(), "broker1");
+            assert_eq!(list.get(1).unwrap(), "broker2");
+        } else {
+            assert!(false);
+        }
+    }
+
+    #[test]
     fn should_convert_empty_response() {
         let message = ResponseMessage::new(Response::Empty);
 
@@ -391,6 +501,22 @@ mod tests {
 
         if let Response::Offset(value) = &message.response {
             assert_eq!(value.0, 100);
+        } else {
+            assert!(false);
+        }
+    }
+
+    #[test]
+    fn should_convert_askthecontrolller_response() {
+        let message =
+            ResponseMessage::new(Response::AskTheController(String::from("localhost:8080")));
+
+        let parsed_message = message.as_vec();
+        let message = ResponseMessage::parse(&parsed_message[..]);
+        let message = message.first().unwrap();
+
+        if let Response::AskTheController(value) = &message.response {
+            assert_eq!(value, "localhost:8080");
         } else {
             assert!(false);
         }

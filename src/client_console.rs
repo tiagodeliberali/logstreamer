@@ -1,9 +1,6 @@
-use logstreamer::{
-    Action, ActionMessage, Content, OffsetValue, Response, ResponseMessage, TopicAddress,
-};
+use logstreamer::{Action, ActionMessage, Client, Content, OffsetValue, Response, TopicAddress};
 use std::io;
-use std::io::prelude::{Read, Write};
-use std::net::TcpStream;
+use std::env;
 
 fn to_clean_string(input: &[u8]) -> String {
     String::from_utf8_lossy(&input)
@@ -12,25 +9,15 @@ fn to_clean_string(input: &[u8]) -> String {
         .replace("\n", "")
 }
 
-fn send_message(stream: &mut TcpStream, message: ActionMessage) -> Vec<ResponseMessage> {
-    stream.write_all(&message.as_vec()[..]).unwrap();
-    stream.flush().unwrap();
-
-    let mut buffer = [0; 1024];
-    let _ = match &stream.read(&mut buffer) {
-        Ok(value) => value,
-        Err(err) => {
-            println!("Failed to read stream\n{}", err);
-            return vec![ResponseMessage::new_empty()];
-        }
-    };
-
-    ResponseMessage::parse(&buffer)
-}
-
 fn main() {
     let mut exit = false;
-    let mut stream = TcpStream::connect("127.0.0.1:8080").unwrap();
+    let args: Vec<String> = env::args().collect();
+    let broker_address = match args.get(1) {
+        Some(value) => value.into(),
+        None => String::from("127.0.0.1:8080"),
+    };
+
+    let mut client = Client::new(broker_address);
 
     println!("logstreamer client");
     while !exit {
@@ -40,6 +27,15 @@ fn main() {
         let action = input.as_bytes()[0];
 
         let message = match action {
+            // i
+            105 => ActionMessage::new(
+                Action::InitializeController(vec![
+                    String::from("127.0.0.1:8080"),
+                    String::from("127.0.0.1:8081"),
+                    String::from("127.0.0.1:8082"),
+                ]),
+                String::new(),
+            ),
             // c - consume
             99 => ActionMessage::new(
                 Action::Consume(
@@ -73,7 +69,7 @@ fn main() {
             _ => ActionMessage::new(Action::Invalid, String::new()),
         };
 
-        let response_list = send_message(&mut stream, message);
+        let response_list = client.send_message(message);
 
         for response in response_list {
             match response.response {
@@ -82,6 +78,7 @@ fn main() {
                     println!("[content: {}] {}", offset.0, value.value)
                 }
                 Response::Offset(value) => println!("[offset] {}", value.0),
+                Response::AskTheController(broker) => println!("[ask controller] {}", broker),
                 Response::Error => println!("[error]"),
             }
         }

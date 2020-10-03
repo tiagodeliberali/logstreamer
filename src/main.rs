@@ -1,24 +1,36 @@
-use logstreamer::{Action, ActionMessage, Cluster, OffsetValue, Response, ResponseMessage};
-use logstreamer::{Content, TopicAddress};
+use logstreamer::{Action, ActionMessage, Broker, ResponseMessage};
+use std::env;
 use std::io::prelude::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
 
 fn main() {
-    let cluster = Arc::new(Cluster::new());
+    let args: Vec<String> = env::args().collect();
+    let broker_address = match args.get(1) {
+        Some(value) => value.into(),
+        None => String::from("127.0.0.1:8080"),
+    };
+    
+    let broker = Arc::new(Broker::new());
 
-    let listener = match TcpListener::bind("127.0.0.1:8080") {
+    let listener = match TcpListener::bind(&broker_address) {
         Ok(listener) => listener,
         Err(err) => panic!("Failed to bind address\r\n{}", err),
     };
+    println!("Started server at {}", &broker_address);
+
+    let cloned_broker = broker.clone();
+    thread::spawn(move || loop {
+        cloned_broker.loop_failure_detector();
+    });
 
     for stream in listener.incoming() {
-        let cloned_cluster = cluster.clone();
+        let cloned_broker = broker.clone();
         match stream {
             Ok(valid_stream) => {
                 thread::spawn(move || {
-                    handle_connection(valid_stream, cloned_cluster);
+                    handle_connection(valid_stream, cloned_broker);
                 });
             }
             Err(err) => println!("Failed to process current stream\n{}", err),
@@ -26,7 +38,7 @@ fn main() {
     }
 }
 
-fn handle_connection(mut stream: TcpStream, cluster: Arc<Cluster>) {
+fn handle_connection(mut stream: TcpStream, broker: Arc<Broker>) {
     loop {
         let mut buffer = [0; 1024];
         let _ = match stream.read(&mut buffer) {
@@ -40,15 +52,22 @@ fn handle_connection(mut stream: TcpStream, cluster: Arc<Cluster>) {
         let message = ActionMessage::parse(&buffer);
 
         let response_list = match message.action {
-            Action::Produce(topic, content) => store_data(topic, content, cluster.clone()),
-            Action::Consume(topic, offset, limit) => {
-                read_data(topic, offset, limit, cluster.clone())
-            }
+            Action::Produce(topic, content) => broker.store_data(topic, content),
+            Action::Consume(topic, offset, limit) => broker.read_data(topic, offset, limit),
             Action::CreateTopic(topic, partition_number) => {
-                add_topic(topic, partition_number, cluster.clone())
+                broker.add_topic(topic, partition_number)
             }
-            Action::Quit => return,
-            Action::Invalid => vec![ResponseMessage::new_empty()],
+            Action::InitializeController(brokers) => broker.init_controller(brokers),
+            Action::InitializeBroker(id, brokers) => broker.init_broker(id, brokers),
+            Action::IamAlive(id) => broker.receive_signal(id),
+            Action::Invalid => Vec::new(),
+            Action::Quit => {
+                stream
+                    .write_all(&ResponseMessage::new_empty().as_vec()[..])
+                    .unwrap();
+                stream.flush().unwrap();
+                return;
+            }
         };
 
         let mut response_content: Vec<u8> = Vec::new();
@@ -63,53 +82,4 @@ fn handle_connection(mut stream: TcpStream, cluster: Arc<Cluster>) {
         stream.write_all(&response_content[..]).unwrap();
         stream.flush().unwrap();
     }
-}
-
-fn store_data(
-    topic: TopicAddress,
-    content: Vec<Content>,
-    cluster: Arc<Cluster>,
-) -> Vec<ResponseMessage> {
-    match cluster.add_content(topic, content) {
-        Some(offset) => vec![ResponseMessage::new(Response::Offset(offset))],
-        None => vec![ResponseMessage::new(Response::Error)],
-    }
-}
-
-fn read_data(
-    topic: TopicAddress,
-    offset: OffsetValue,
-    limit: u32,
-    cluster: Arc<Cluster>,
-) -> Vec<ResponseMessage> {
-    let mut content_list = Vec::new();
-
-    match cluster.get_partition(topic) {
-        Some(partition) => {
-            let locked_partition = partition.queue.lock().unwrap();
-
-            if locked_partition.is_empty() {
-                return content_list;
-            }
-
-            let range_end = usize::min((offset.0 + limit) as usize, locked_partition.len());
-            let range_start = usize::min(offset.0 as usize, range_end - 1);
-            let mut position = offset.0 as u32;
-
-            for value in locked_partition[range_start..range_end].iter() {
-                content_list.push(ResponseMessage::new(Response::Content(
-                    OffsetValue(position),
-                    value.clone(),
-                )));
-                position += 1;
-            }
-            content_list
-        }
-        None => vec![ResponseMessage::new(Response::Error)],
-    }
-}
-
-fn add_topic(topic: String, partition_number: u32, cluster: Arc<Cluster>) -> Vec<ResponseMessage> {
-    cluster.add_topic(topic, partition_number as usize);
-    vec![]
 }
