@@ -6,13 +6,12 @@ use std::sync::Arc;
 use std::thread;
 
 fn main() {
-    let mut broker_address = String::from("127.0.0.1:8080");
-
     let args: Vec<String> = env::args().collect();
-    if args.len() > 1 {
-        broker_address = args.get(1).unwrap().clone();
-    }
-
+    let broker_address = match args.get(1) {
+        Some(value) => value.into(),
+        None => String::from("127.0.0.1:8080"),
+    } ;
+    
     let broker = Arc::new(Broker::new());
 
     let listener = match TcpListener::bind(&broker_address) {
